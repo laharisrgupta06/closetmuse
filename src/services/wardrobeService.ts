@@ -25,12 +25,13 @@ export interface NewWardrobeItem {
 
 /**
  * Uploads an image File or Blob to Supabase Storage and returns the public URL.
- * The bucket must exist and have a public SELECT policy.
+ * Files go under "<user_id>/", the only folder Storage policies let a user write to.
  */
 export async function uploadGarmentImage(file: File | Blob, customName?: string): Promise<string> {
+  const userId = await getUserId();
   const fileName = (file instanceof File ? file.name : customName) ?? "garment.png";
   const ext = fileName.split(".").pop() ?? "png";
-  const path = `public/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+  const path = `${userId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
 
   const { error } = await supabase.storage.from(BUCKET).upload(path, file, {
     cacheControl: "3600",
@@ -176,20 +177,14 @@ export async function deleteWardrobeItem(id: string, imageUrl?: string): Promise
  * Fetches the current user's wardrobe items, newest first.
  */
 export async function fetchAllWardrobeItems(): Promise<WardrobeItem[]> {
-  const { data: userData } = await supabase.auth.getUser();
-  const userId = userData?.user?.id;
+  const userId = await getUserId();
 
-  let query = supabase
+  // Always scoped to the signed-in user (RLS also enforces this)
+  const { data, error } = await supabase
     .from("wardrobe_items")
     .select("*")
+    .eq("user_id", userId)
     .order("created_at", { ascending: false });
-
-  // Filter by user if authenticated (RLS also enforces this)
-  if (userId) {
-    query = query.eq("user_id", userId);
-  }
-
-  const { data, error } = await query;
   if (error) throw new Error(`Failed to fetch wardrobe items: ${error.message}`);
   return (data as WardrobeItem[]) ?? [];
 }

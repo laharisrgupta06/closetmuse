@@ -1,35 +1,59 @@
 -- ─────────────────────────────────────────────────────────────────────────────
--- Migration 002: Saved Outfits table with Row Level Security
--- Run this in the Supabase SQL editor:
---   Dashboard → SQL Editor → paste this file → Run
+-- Migration 002: saved_outfits table with owner-only access
+--
+-- Creates the table the Outfit Builder and AI Stylist save to. Until this
+-- runs, the app falls back to user_metadata + localStorage; those fallback
+-- outfits are still merged in by the app and are not touched here.
+--
+-- Safe to re-run.
 -- ─────────────────────────────────────────────────────────────────────────────
 
-CREATE TABLE IF NOT EXISTS saved_outfits (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  name TEXT NOT NULL,
-  occasion TEXT,
-  style TEXT,
+CREATE TABLE IF NOT EXISTS public.saved_outfits (
+  id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id       UUID        NOT NULL DEFAULT auth.uid()
+                            REFERENCES auth.users (id) ON DELETE CASCADE,
+  name          TEXT        NOT NULL,
+  occasion      TEXT,
+  style         TEXT,
   styling_notes TEXT,
-  item_ids TEXT[] NOT NULL DEFAULT '{}',
-  created_at TIMESTAMPTZ DEFAULT now()
+  item_ids      TEXT[]      NOT NULL DEFAULT '{}',
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Row Level Security: users see and modify only their own saved outfits
-ALTER TABLE saved_outfits ENABLE ROW LEVEL SECURITY;
+CREATE INDEX IF NOT EXISTS saved_outfits_user_id_created_at_idx
+  ON public.saved_outfits (user_id, created_at DESC);
 
-CREATE POLICY "Users read own saved outfits"
-  ON saved_outfits FOR SELECT
-  USING (auth.uid() = user_id);
+ALTER TABLE public.saved_outfits ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Users insert own saved outfits"
-  ON saved_outfits FOR INSERT
-  WITH CHECK (auth.uid() = user_id);
+-- Replace whatever policies exist with the owner-only set below
+DO $$
+DECLARE p RECORD;
+BEGIN
+  FOR p IN
+    SELECT policyname FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'saved_outfits'
+  LOOP
+    EXECUTE format('DROP POLICY %I ON public.saved_outfits', p.policyname);
+  END LOOP;
+END $$;
 
-CREATE POLICY "Users update own saved outfits"
-  ON saved_outfits FOR UPDATE
-  USING (auth.uid() = user_id);
+CREATE POLICY "saved_outfits_select_own"
+  ON public.saved_outfits FOR SELECT TO authenticated
+  USING ((SELECT auth.uid()) = user_id);
 
-CREATE POLICY "Users delete own saved outfits"
-  ON saved_outfits FOR DELETE
-  USING (auth.uid() = user_id);
+CREATE POLICY "saved_outfits_insert_own"
+  ON public.saved_outfits FOR INSERT TO authenticated
+  WITH CHECK ((SELECT auth.uid()) = user_id);
+
+CREATE POLICY "saved_outfits_update_own"
+  ON public.saved_outfits FOR UPDATE TO authenticated
+  USING ((SELECT auth.uid()) = user_id)
+  WITH CHECK ((SELECT auth.uid()) = user_id);
+
+CREATE POLICY "saved_outfits_delete_own"
+  ON public.saved_outfits FOR DELETE TO authenticated
+  USING ((SELECT auth.uid()) = user_id);
+
+-- Signed-out visitors get no access at all
+REVOKE ALL ON public.saved_outfits FROM anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.saved_outfits TO authenticated;

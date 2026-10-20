@@ -1,5 +1,11 @@
 // Supabase Edge Function: ai-stylist
 // Deno runtime
+//
+// Requires a signed-in user. The wardrobe is loaded server-side with the
+// caller's own JWT (so RLS applies) and filtered to their user_id; any
+// "items" sent in the request body are ignored.
+
+import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -26,7 +32,6 @@ interface StylistRequestBody {
   occasion?: string;
   style_preference?: string;
   wardrobe_source?: "my_closet" | "room";
-  items?: WardrobeItem[];
 }
 
 Deno.serve(async (req: Request) => {
@@ -43,6 +48,52 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
+    // Authenticate the caller before doing any work
+    const token = (req.headers.get("Authorization") ?? "")
+      .replace(/^Bearer\s+/i, "")
+      .trim();
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const supabaseKey =
+      req.headers.get("apikey") ?? Deno.env.get("SUPABASE_ANON_KEY");
+
+    if (!supabaseUrl || !supabaseKey) {
+      return new Response(
+        JSON.stringify({ error: "Supabase is not configured for this function." }),
+        {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    if (!token) {
+      return new Response(
+        JSON.stringify({ error: "Authentication required." }),
+        {
+          status: 401,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    const supabase = createClient(supabaseUrl, supabaseKey, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+
+    const { data: userData, error: userError } =
+      await supabase.auth.getUser(token);
+
+    if (userError || !userData?.user) {
+      return new Response(
+        JSON.stringify({ error: "Invalid or expired session." }),
+        {
+          status: 401,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
+
     const apiKey =
       Deno.env.get("GEMINI_API_KEY") || Deno.env.get("VITE_GEMINI_API_KEY");
 
@@ -60,15 +111,29 @@ Deno.serve(async (req: Request) => {
     }
 
     const body: StylistRequestBody = await req.json();
-    const {
-      prompt = "",
-      occasion = "",
-      style_preference = "",
-      items = [],
-    } = body;
+    const { prompt = "", occasion = "", style_preference = "" } = body;
+
+    // Load only the authenticated user's wardrobe (RLS + explicit filter)
+    const { data: wardrobeRows, error: wardrobeError } = await supabase
+      .from("wardrobe_items")
+      .select("id, name, category, color, material, pattern, occasion, style, brand, notes")
+      .eq("user_id", userData.user.id);
+
+    if (wardrobeError) {
+      console.error("Failed to load wardrobe:", wardrobeError.message);
+      return new Response(
+        JSON.stringify({ error: "Failed to load your wardrobe." }),
+        {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    const items: WardrobeItem[] = wardrobeRows ?? [];
 
     // Gracefully handle empty wardrobe
-    if (!items || items.length === 0) {
+    if (items.length === 0) {
       return new Response(
         JSON.stringify({
           outfit_items: [],

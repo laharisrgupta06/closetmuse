@@ -7,6 +7,7 @@
  *           unavailable or its quota is exhausted).
  */
 import { supabase } from "../lib/supabase";
+import { getUserId } from "./wardrobeService";
 import type { WardrobeItem, GarmentOccasion, GarmentStyle } from "../types";
 
 export interface StylingRequestParams {
@@ -23,12 +24,14 @@ export interface StylingResultData {
 }
 
 /**
- * Fetch all available wardrobe items for styling.
+ * Fetch the signed-in user's wardrobe items for styling.
  */
 export async function fetchWardrobeItems(): Promise<WardrobeItem[]> {
+  const userId = await getUserId();
   const { data, error } = await supabase
     .from("wardrobe_items")
     .select("*")
+    .eq("user_id", userId)
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -200,6 +203,8 @@ export async function requestStylistRecommendation(
         occasion: params.occasion || undefined,
         style_preference: params.stylePreference || undefined,
         wardrobe_source: params.wardrobeSource,
+        // Ignored by the updated ai-stylist, which loads the wardrobe itself.
+        // Kept until that version is deployed so the current one keeps working.
         items: availableItems.map((item) => ({
           id: item.id,
           name: item.name,
