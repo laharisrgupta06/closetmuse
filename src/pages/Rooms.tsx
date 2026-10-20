@@ -698,7 +698,13 @@ function ShareItemsModal({
       return next;
     });
 
+  const allSelected = items.length > 0 && items.every((item) => selected.has(item.id));
+
+  const toggleAll = () =>
+    setSelected(allSelected ? new Set() : new Set(items.map((item) => item.id)));
+
   const handleSave = async () => {
+    if (saving) return;
     setSaving(true);
     setError(null);
     try {
@@ -748,6 +754,24 @@ function ShareItemsModal({
           Members of this room can see the items you tick. Everything else in your closet stays private.
           Unticking an item stops sharing it; it stays in your closet.
         </p>
+
+        {!loading && items.length > 0 && (
+          <div className="share-select-bar">
+            <span id="share-selected-count" aria-live="polite">
+              {selected.size} of {items.length} selected
+            </span>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={toggleAll}
+              disabled={saving}
+              id="share-toggle-all"
+              aria-label={allSelected ? "Deselect all items" : `Select all ${items.length} items`}
+            >
+              {allSelected ? "Deselect all" : `Select all (${items.length})`}
+            </button>
+          </div>
+        )}
 
         <div style={{ overflowY: "auto", flex: 1, minHeight: 120, marginBottom: 16 }}>
           {loading ? (

@@ -9,6 +9,7 @@
  */
 import { supabase } from "../lib/supabase";
 import { getUserId } from "./wardrobeService";
+import { planShareChanges } from "../utils/shareChanges";
 import type { Room, RoomMemberProfile, SharedRoomItem, WardrobeItem } from "../types";
 
 interface RoomRow {
@@ -239,15 +240,20 @@ export async function setMySharedItems(roomId: string, itemIds: string[]): Promi
     .eq("shared_by", userId);
   if (error) throw roomError(error, "Failed to load your shared items.");
 
-  const wanted = new Set(itemIds);
-  const existing = new Set((current ?? []).map((r) => r.item_id as string));
-  const toAdd = itemIds.filter((id) => !existing.has(id));
-  const toRemove = [...existing].filter((id) => !wanted.has(id));
+  const { toAdd, toRemove } = planShareChanges(
+    (current ?? []).map((r) => r.item_id as string),
+    itemIds
+  );
 
   if (toAdd.length > 0) {
+    // ON CONFLICT DO NOTHING: a share saved meanwhile (another tab, a double
+    // click) is not an error; the (room_id, item_id) key prevents duplicates
     const { error: addError } = await supabase
       .from("room_items")
-      .insert(toAdd.map((item_id) => ({ room_id: roomId, item_id, shared_by: userId })));
+      .upsert(
+        toAdd.map((item_id) => ({ room_id: roomId, item_id, shared_by: userId })),
+        { onConflict: "room_id,item_id", ignoreDuplicates: true }
+      );
     if (addError) throw roomError(addError, "Could not share items.");
   }
 
