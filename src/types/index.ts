@@ -74,6 +74,10 @@ export interface Room {
   description?: string;
   created_by: string;
   passcode?: string;
+  /** Code other users enter to join (visible to members only) */
+  invite_code?: string;
+  /** The signed-in user's role in this room */
+  my_role?: 'owner' | 'member';
   member_count: number;
   item_count: number;
   is_private: boolean;
@@ -87,6 +91,22 @@ export interface RoomMember {
   user_id: string;
   role: 'owner' | 'member';
   joined_at: string;
+}
+
+/** A room member as returned by get_room_members() */
+export interface RoomMemberProfile {
+  user_id: string;
+  role: 'owner' | 'member';
+  joined_at: string;
+  display_name: string;
+  is_me: boolean;
+}
+
+/** A wardrobe item shared into a room, with who shared it */
+export interface SharedRoomItem {
+  item: WardrobeItem;
+  shared_by: string;
+  shared_at: string;
 }
 
 export interface BorrowRequest {

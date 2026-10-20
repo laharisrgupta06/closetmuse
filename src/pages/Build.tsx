@@ -760,7 +760,8 @@ function SingleItemMode() {
           <div>
             <div style={{ fontSize: 13.5, fontWeight: 600 }}>Share in Rooms</div>
             <div style={{ fontSize: 12, color: "var(--brown-soft)", marginTop: 2 }}>
-              Others in your rooms can see and request this item
+              Marks this item as one you're happy to share. Nothing is shared until
+              you add it to a Room from that Room's "Share items".
             </div>
           </div>
           <label style={{ position: "relative", display: "inline-block", width: 40, height: 22, cursor: "pointer", flexShrink: 0 }}>

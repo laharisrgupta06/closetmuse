@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Heart, Plus, Edit2, Trash2 } from "lucide-react";
 import type { WardrobeItem } from "../types";
 import { getNormalizedCategory } from "../utils/category";
@@ -10,6 +11,8 @@ interface WardrobeCardProps {
   onDelete?: (item: WardrobeItem) => void;
   selected?: boolean;
   selectable?: boolean;
+  /** Extra content under the item details (e.g. who shared it in a Room) */
+  footer?: ReactNode;
 }
 
 export default function WardrobeCard({
@@ -20,6 +23,7 @@ export default function WardrobeCard({
   onDelete,
   selected = false,
   selectable = false,
+  footer,
 }: WardrobeCardProps) {
   const handleClick = () => {
     if (selectable) {
@@ -139,6 +143,7 @@ export default function WardrobeCard({
           {item.subcategory || getNormalizedCategory(item)}
           {item.color ? ` • ${item.color}` : ""}
         </div>
+        {footer}
       </div>
     </div>
   );

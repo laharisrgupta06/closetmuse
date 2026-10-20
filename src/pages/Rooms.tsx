@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Search,
   Plus,
@@ -7,12 +7,36 @@ import {
   Shirt,
   SlidersHorizontal,
   RefreshCw,
+  Copy,
+  Check,
+  Loader2,
+  Share2,
+  Lock,
+  AlertCircle,
 } from "lucide-react";
 import Navbar from "../components/Navbar";
 import EmptyState from "../components/EmptyState";
 import RoomCard, { RoomCardSkeleton } from "../components/RoomCard";
 import WardrobeCard, { WardrobeCardSkeleton } from "../components/WardrobeCard";
-import type { Room, WardrobeItem, LoadingState } from "../types";
+import { useAuth } from "../contexts/AuthContext";
+import {
+  createRoom,
+  fetchMyRooms,
+  fetchRoomItems,
+  fetchRoomMembers,
+  joinRoom,
+  setMySharedItems,
+  unshareItem,
+} from "../services/roomService";
+import { fetchAllWardrobeItems } from "../services/wardrobeService";
+import { getNormalizedCategory } from "../utils/category";
+import type {
+  Room,
+  RoomMemberProfile,
+  SharedRoomItem,
+  WardrobeItem,
+  LoadingState,
+} from "../types";
 import "../App.css";
 
 type ActiveView = "rooms" | "room-detail";
@@ -24,10 +48,59 @@ const CATEGORY_FILTERS = [
   { value: "dresses", label: "Dresses" },
   { value: "outerwear", label: "Outerwear" },
   { value: "footwear", label: "Footwear" },
+  { value: "bags", label: "Bags" },
+  { value: "jewellery", label: "Jewellery" },
   { value: "accessories", label: "Accessories" },
 ];
 
+const overlayStyle = {
+  position: "fixed",
+  inset: 0,
+  background: "rgba(28, 23, 20, 0.5)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  zIndex: 200,
+  padding: 20,
+} as const;
+
+function ErrorNote({ message }: { message: string }) {
+  return (
+    <div
+      role="alert"
+      style={{
+        display: "flex",
+        alignItems: "flex-start",
+        gap: 8,
+        padding: "10px 12px",
+        background: "var(--rose-pale)",
+        borderRadius: "var(--r-md)",
+        border: "1px solid var(--rose-light)",
+        fontSize: 13,
+        color: "var(--espresso)",
+      }}
+    >
+      <AlertCircle size={14} style={{ color: "var(--rose)", flexShrink: 0, marginTop: 2 }} />
+      <span>{message}</span>
+    </div>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+      <path
+        d="M1 1l12 12M13 1L1 13"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
 export default function Rooms() {
+  const { user } = useAuth();
   const [view, setView] = useState<ActiveView>("rooms");
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
   const [roomSearch, setRoomSearch] = useState("");
@@ -35,16 +108,111 @@ export default function Rooms() {
   const [activeFilter, setActiveFilter] = useState("all");
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showJoinModal, setShowJoinModal] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
 
-  // Data — ready for Supabase
-  const [rooms] = useState<Room[]>([]);
-  const [roomItems] = useState<WardrobeItem[]>([]);
-  const [roomsLoading] = useState<LoadingState>("success");
-  const [itemsLoading] = useState<LoadingState>("success");
+  const [rooms, setRooms] = useState<Room[]>([]);
+  const [roomsLoading, setRoomsLoading] = useState<LoadingState>("loading");
+  const [roomsError, setRoomsError] = useState<string | null>(null);
+
+  const [roomItems, setRoomItems] = useState<SharedRoomItem[]>([]);
+  const [members, setMembers] = useState<RoomMemberProfile[]>([]);
+  const [itemsLoading, setItemsLoading] = useState<LoadingState>("idle");
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const loadRooms = useCallback(async () => {
+    setRoomsLoading("loading");
+    setRoomsError(null);
+    try {
+      setRooms(await fetchMyRooms());
+      setRoomsLoading("success");
+    } catch (err) {
+      setRoomsError(err instanceof Error ? err.message : "Failed to load rooms.");
+      setRoomsLoading("error");
+    }
+  }, []);
+
+  const loadRoomDetail = useCallback(async (roomId: string) => {
+    setItemsLoading("loading");
+    setDetailError(null);
+    try {
+      const [items, people] = await Promise.all([
+        fetchRoomItems(roomId),
+        fetchRoomMembers(roomId),
+      ]);
+      setRoomItems(items);
+      setMembers(people);
+      setItemsLoading("success");
+    } catch (err) {
+      setDetailError(err instanceof Error ? err.message : "Failed to load this room.");
+      setItemsLoading("error");
+    }
+  }, []);
+
+  // Initial load (state starts as "loading"; later reloads use loadRooms)
+  useEffect(() => {
+    let active = true;
+    fetchMyRooms()
+      .then((data) => {
+        if (!active) return;
+        setRooms(data);
+        setRoomsLoading("success");
+      })
+      .catch((err) => {
+        if (!active) return;
+        setRoomsError(err instanceof Error ? err.message : "Failed to load rooms.");
+        setRoomsLoading("error");
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const handleRoomSelect = (room: Room) => {
     setSelectedRoom(room);
     setView("room-detail");
+    setRoomItems([]);
+    setMembers([]);
+    setItemSearch("");
+    setActiveFilter("all");
+    loadRoomDetail(room.id);
+  };
+
+  const handleRoomReady = (room: Room) => {
+    setShowCreateModal(false);
+    setShowJoinModal(false);
+    loadRooms();
+    handleRoomSelect(room);
+  };
+
+  const handleCopyCode = async () => {
+    if (!selectedRoom?.invite_code) return;
+    try {
+      await navigator.clipboard.writeText(selectedRoom.invite_code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard blocked: the code is visible to copy manually
+    }
+  };
+
+  const handleStopSharing = async (item: WardrobeItem) => {
+    if (!selectedRoom) return;
+    if (!confirm(`Stop sharing "${item.name}" in ${selectedRoom.name}? It stays in your closet.`)) {
+      return;
+    }
+    try {
+      await unshareItem(selectedRoom.id, item.id);
+      setRoomItems((prev) => prev.filter((r) => r.item.id !== item.id));
+      loadRooms();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Could not stop sharing this item.");
+    }
+  };
+
+  const memberName = (userId: string) => {
+    if (userId === user?.id) return "You";
+    return members.find((m) => m.user_id === userId)?.display_name ?? "A member";
   };
 
   const filteredRooms = rooms.filter((r) =>
@@ -54,13 +222,17 @@ export default function Rooms() {
   const filteredItems =
     activeFilter === "all"
       ? roomItems
-      : roomItems.filter((i) => i.category === activeFilter);
+      : roomItems.filter((r) => getNormalizedCategory(r.item) === activeFilter);
 
   const searchedItems = itemSearch
-    ? filteredItems.filter((i) =>
-        i.name.toLowerCase().includes(itemSearch.toLowerCase())
+    ? filteredItems.filter((r) =>
+        r.item.name.toLowerCase().includes(itemSearch.toLowerCase())
       )
     : filteredItems;
+
+  const mySharedIds = roomItems
+    .filter((r) => r.shared_by === user?.id)
+    .map((r) => r.item.id);
 
   return (
     <div className="app-shell">
@@ -98,15 +270,25 @@ export default function Rooms() {
                   </button>
                 </>
               ) : (
-                <button
-                  className="btn btn-ghost btn-sm"
-                  onClick={() => {
-                    setView("rooms");
-                    setSelectedRoom(null);
-                  }}
-                >
-                  Back to Rooms
-                </button>
+                <>
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => {
+                      setView("rooms");
+                      setSelectedRoom(null);
+                    }}
+                  >
+                    Back to Rooms
+                  </button>
+                  <button
+                    className="btn btn-primary btn-sm"
+                    onClick={() => setShowShareModal(true)}
+                    id="share-items-btn"
+                  >
+                    <Share2 size={13} />
+                    Share items
+                  </button>
+                </>
               )}
             </div>
           </div>
@@ -140,9 +322,9 @@ export default function Rooms() {
                 <EmptyState
                   icon={Users}
                   title="Unable to load rooms"
-                  description="Something went wrong. Please try again."
+                  description={roomsError ?? "Something went wrong. Please try again."}
                   action={
-                    <button className="btn btn-secondary btn-sm">
+                    <button className="btn btn-secondary btn-sm" onClick={loadRooms}>
                       <RefreshCw size={13} />
                       Retry
                     </button>
@@ -151,25 +333,31 @@ export default function Rooms() {
               ) : filteredRooms.length === 0 ? (
                 <EmptyState
                   icon={Users}
-                  title="No rooms yet"
-                  description="Create a room to share your wardrobe with friends, or join one with a passcode."
+                  title={rooms.length === 0 ? "No rooms yet" : "No rooms found"}
+                  description={
+                    rooms.length === 0
+                      ? "Create a room to share chosen pieces with friends or family, or join one with an invite code."
+                      : `No rooms match "${roomSearch}".`
+                  }
                   action={
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <button
-                        className="btn btn-secondary btn-sm"
-                        onClick={() => setShowJoinModal(true)}
-                      >
-                        <Key size={13} />
-                        Join Room
-                      </button>
-                      <button
-                        className="btn btn-primary btn-sm"
-                        onClick={() => setShowCreateModal(true)}
-                      >
-                        <Plus size={13} />
-                        Create Room
-                      </button>
-                    </div>
+                    rooms.length === 0 ? (
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => setShowJoinModal(true)}
+                        >
+                          <Key size={13} />
+                          Join Room
+                        </button>
+                        <button
+                          className="btn btn-primary btn-sm"
+                          onClick={() => setShowCreateModal(true)}
+                        >
+                          <Plus size={13} />
+                          Create Room
+                        </button>
+                      </div>
+                    ) : undefined
                   }
                 />
               ) : (
@@ -204,8 +392,10 @@ export default function Rooms() {
                     </div>
                     <div>
                       <div style={{ fontSize: 14, fontWeight: 600 }}>
-                        {selectedRoom.member_count} member
-                        {selectedRoom.member_count !== 1 ? "s" : ""}
+                        {members.length || selectedRoom.member_count} member
+                        {(members.length || selectedRoom.member_count) !== 1 ? "s" : ""}
+                        {" · "}
+                        {roomItems.length} shared item{roomItems.length !== 1 ? "s" : ""}
                       </div>
                       {selectedRoom.description && (
                         <div
@@ -221,6 +411,12 @@ export default function Rooms() {
                     </div>
                   </div>
                 </div>
+
+                {detailError && (
+                  <div style={{ marginBottom: 16 }}>
+                    <ErrorNote message={detailError} />
+                  </div>
+                )}
 
                 {/* Filter bar */}
                 <div className="filter-bar">
@@ -264,18 +460,62 @@ export default function Rooms() {
                   <EmptyState
                     icon={Shirt}
                     title="No items shared yet"
-                    description="Members haven't shared any items in this room yet."
+                    description="Nothing from anyone's closet is visible here until they choose to share it."
+                    action={
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => setShowShareModal(true)}
+                      >
+                        <Share2 size={13} />
+                        Share items
+                      </button>
+                    }
                   />
                 ) : searchedItems.length === 0 ? (
                   <EmptyState
                     icon={Search}
                     title="No items found"
-                    description={`No items match "${itemSearch}".`}
+                    description={
+                      itemSearch
+                        ? `No items match "${itemSearch}".`
+                        : "No shared items in this category."
+                    }
                   />
                 ) : (
                   <div className="item-grid">
-                    {searchedItems.map((item) => (
-                      <WardrobeCard key={item.id} item={item} />
+                    {searchedItems.map(({ item, shared_by }) => (
+                      <WardrobeCard
+                        key={item.id}
+                        item={item}
+                        footer={
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "space-between",
+                              gap: 6,
+                              marginTop: 6,
+                              fontSize: 11.5,
+                              color: "var(--brown-muted)",
+                            }}
+                          >
+                            <span className="truncate">Shared by {memberName(shared_by)}</span>
+                            {shared_by === user?.id && (
+                              <button
+                                type="button"
+                                className="btn btn-ghost btn-sm"
+                                style={{ fontSize: 11, padding: "2px 6px" }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleStopSharing(item);
+                                }}
+                              >
+                                Stop sharing
+                              </button>
+                            )}
+                          </div>
+                        }
+                      />
                     ))}
                   </div>
                 )}
@@ -298,6 +538,42 @@ export default function Rooms() {
                     {selectedRoom.name}
                   </div>
 
+                  {/* Invite code */}
+                  {selectedRoom.invite_code && (
+                    <div style={{ marginBottom: 16 }}>
+                      <div style={{ fontSize: 12, color: "var(--brown-muted)", marginBottom: 6 }}>
+                        Invite code — share it with people you want in this room
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <code
+                          id="room-invite-code"
+                          style={{
+                            flex: 1,
+                            padding: "8px 12px",
+                            borderRadius: "var(--r-md)",
+                            background: "var(--cream-dark)",
+                            border: "1px solid var(--border)",
+                            fontSize: 16,
+                            letterSpacing: 3,
+                            textAlign: "center",
+                            fontWeight: 600,
+                          }}
+                        >
+                          {selectedRoom.invite_code}
+                        </code>
+                        <button
+                          type="button"
+                          className="icon-btn"
+                          onClick={handleCopyCode}
+                          aria-label="Copy invite code"
+                          title="Copy invite code"
+                        >
+                          {copied ? <Check size={15} /> : <Copy size={15} />}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="divider" />
 
                   {/* Borrow requests */}
@@ -316,11 +592,51 @@ export default function Rooms() {
                   <div className="section-header" style={{ marginBottom: 12 }}>
                     <span className="section-title">Members</span>
                   </div>
-                  <EmptyState
-                    icon={Users}
-                    title="No member data"
-                    description="Room members will appear here."
-                  />
+                  {members.length === 0 ? (
+                    <EmptyState
+                      icon={Users}
+                      title={itemsLoading === "loading" ? "Loading members…" : "No member data"}
+                      description="Room members will appear here."
+                    />
+                  ) : (
+                    <ul
+                      id="room-members"
+                      style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 10 }}
+                    >
+                      {members.map((m) => (
+                        <li key={m.user_id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <div
+                            aria-hidden="true"
+                            style={{
+                              width: 30,
+                              height: 30,
+                              borderRadius: "50%",
+                              background: "var(--cream-dark)",
+                              border: "1px solid var(--border)",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              fontSize: 13,
+                              fontWeight: 600,
+                              color: "var(--espresso)",
+                              flexShrink: 0,
+                            }}
+                          >
+                            {m.display_name.charAt(0).toUpperCase()}
+                          </div>
+                          <div style={{ minWidth: 0 }}>
+                            <div className="truncate" style={{ fontSize: 13.5, fontWeight: 600 }}>
+                              {m.display_name}
+                              {m.is_me ? " (you)" : ""}
+                            </div>
+                            <div style={{ fontSize: 11.5, color: "var(--brown-muted)", textTransform: "capitalize" }}>
+                              {m.role}
+                            </div>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               </div>
             </div>
@@ -330,35 +646,65 @@ export default function Rooms() {
 
       {/* ── CREATE ROOM MODAL ── */}
       {showCreateModal && (
-        <CreateRoomModal onClose={() => setShowCreateModal(false)} />
+        <CreateRoomModal
+          onClose={() => setShowCreateModal(false)}
+          onCreated={handleRoomReady}
+        />
       )}
 
       {/* ── JOIN ROOM MODAL ── */}
       {showJoinModal && (
-        <JoinRoomModal onClose={() => setShowJoinModal(false)} />
+        <JoinRoomModal
+          onClose={() => setShowJoinModal(false)}
+          onJoined={handleRoomReady}
+        />
+      )}
+
+      {/* ── SHARE ITEMS MODAL ── */}
+      {showShareModal && selectedRoom && (
+        <ShareItemsModal
+          room={selectedRoom}
+          sharedIds={mySharedIds}
+          onClose={() => setShowShareModal(false)}
+          onSaved={() => {
+            setShowShareModal(false);
+            loadRoomDetail(selectedRoom.id);
+            loadRooms();
+          }}
+        />
       )}
     </div>
   );
 }
 
 /* ─── Create Room Modal ─────────────────────────────────────── */
-function CreateRoomModal({ onClose }: { onClose: () => void }) {
+function CreateRoomModal({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void;
+  onCreated: (room: Room) => void;
+}) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [isPrivate, setIsPrivate] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleCreate = async () => {
+    if (!name.trim() || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      onCreated(await createRoom(name, description));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not create the room.");
+      setSaving(false);
+    }
+  };
 
   return (
     <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(28, 23, 20, 0.5)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 200,
-        padding: 20,
-      }}
+      style={overlayStyle}
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -388,14 +734,7 @@ function CreateRoomModal({ onClose }: { onClose: () => void }) {
             </h2>
           </div>
           <button className="icon-btn" onClick={onClose} aria-label="Close">
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <path
-                d="M1 1l12 12M13 1L1 13"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-              />
-            </svg>
+            <CloseIcon />
           </button>
         </div>
 
@@ -409,6 +748,7 @@ function CreateRoomModal({ onClose }: { onClose: () => void }) {
               className="form-input"
               placeholder="e.g. Style Collective"
               value={name}
+              maxLength={80}
               onChange={(e) => setName(e.target.value)}
             />
           </div>
@@ -422,6 +762,7 @@ function CreateRoomModal({ onClose }: { onClose: () => void }) {
               className="form-textarea"
               placeholder="What's this room for?"
               value={description}
+              maxLength={500}
               onChange={(e) => setDescription(e.target.value)}
             />
           </div>
@@ -430,68 +771,39 @@ function CreateRoomModal({ onClose }: { onClose: () => void }) {
             style={{
               display: "flex",
               alignItems: "center",
-              justifyContent: "space-between",
+              gap: 12,
               padding: "14px 16px",
               border: "1px solid var(--border)",
               borderRadius: "var(--r-lg)",
               background: "var(--cream-dark)",
             }}
           >
+            <Lock size={16} style={{ color: "var(--brown-soft)", flexShrink: 0 }} />
             <div>
               <div style={{ fontSize: 13.5, fontWeight: 600 }}>Private room</div>
               <div style={{ fontSize: 12, color: "var(--brown-soft)", marginTop: 2 }}>
-                Members join with a passcode
+                Members join with an invite code. Only items you choose to share are visible.
               </div>
             </div>
-            <label
-              style={{
-                position: "relative",
-                display: "inline-block",
-                width: 40,
-                height: 22,
-                cursor: "pointer",
-              }}
-            >
-              <input
-                type="checkbox"
-                style={{ opacity: 0, width: 0, height: 0 }}
-                checked={isPrivate}
-                onChange={(e) => setIsPrivate(e.target.checked)}
-              />
-              <span
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  borderRadius: 11,
-                  background: isPrivate ? "var(--espresso)" : "var(--muted)",
-                  transition: "background 0.2s",
-                }}
-              />
-              <span
-                style={{
-                  position: "absolute",
-                  top: 3,
-                  left: isPrivate ? 21 : 3,
-                  width: 16,
-                  height: 16,
-                  borderRadius: "50%",
-                  background: "white",
-                  transition: "left 0.2s",
-                }}
-              />
-            </label>
           </div>
+
+          {error && <ErrorNote message={error} />}
 
           <button
             className="btn btn-primary"
             style={{ width: "100%" }}
-            disabled={!name.trim()}
-            onClick={() => {
-              // TODO: create room in Supabase
-              onClose();
-            }}
+            disabled={!name.trim() || saving}
+            onClick={handleCreate}
+            id="create-room-submit"
           >
-            Create Room
+            {saving ? (
+              <>
+                <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />
+                Creating…
+              </>
+            ) : (
+              "Create Room"
+            )}
           </button>
         </div>
       </div>
@@ -500,21 +812,32 @@ function CreateRoomModal({ onClose }: { onClose: () => void }) {
 }
 
 /* ─── Join Room Modal ───────────────────────────────────────── */
-function JoinRoomModal({ onClose }: { onClose: () => void }) {
+function JoinRoomModal({
+  onClose,
+  onJoined,
+}: {
+  onClose: () => void;
+  onJoined: (room: Room) => void;
+}) {
   const [passcode, setPasscode] = useState("");
+  const [joining, setJoining] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleJoin = async () => {
+    if (!passcode.trim() || joining) return;
+    setJoining(true);
+    setError(null);
+    try {
+      onJoined(await joinRoom(passcode));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not join the room.");
+      setJoining(false);
+    }
+  };
 
   return (
     <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(28, 23, 20, 0.5)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 200,
-        padding: 20,
-      }}
+      style={overlayStyle}
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -540,48 +863,246 @@ function JoinRoomModal({ onClose }: { onClose: () => void }) {
                 fontWeight: 500,
               }}
             >
-              Enter Passcode
+              Enter Invite Code
             </h2>
           </div>
           <button className="icon-btn" onClick={onClose} aria-label="Close">
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <path
-                d="M1 1l12 12M13 1L1 13"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-              />
-            </svg>
+            <CloseIcon />
           </button>
         </div>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+        <form
+          style={{ display: "flex", flexDirection: "column", gap: 18 }}
+          onSubmit={(e) => {
+            e.preventDefault();
+            handleJoin();
+          }}
+        >
           <div className="form-group">
             <label className="form-label" htmlFor="passcode">
-              Room Passcode
+              Room Invite Code
             </label>
             <input
               id="passcode"
               className="form-input"
-              placeholder="Enter passcode"
+              placeholder="e.g. 7KQ4-MZ2P"
               value={passcode}
+              maxLength={20}
+              autoComplete="off"
               onChange={(e) => setPasscode(e.target.value)}
-              style={{ letterSpacing: 3, textAlign: "center" }}
+              style={{ letterSpacing: 3, textAlign: "center", textTransform: "uppercase" }}
             />
           </div>
+
+          {error && <ErrorNote message={error} />}
 
           <button
             className="btn btn-primary"
             style={{ width: "100%" }}
-            disabled={!passcode.trim()}
-            onClick={() => {
-              // TODO: look up room by passcode in Supabase
-              onClose();
-            }}
+            disabled={!passcode.trim() || joining}
+            type="submit"
+            id="join-room-submit"
           >
-            Join Room
+            {joining ? (
+              <>
+                <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />
+                Joining…
+              </>
+            ) : (
+              "Join Room"
+            )}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Share Items Modal ─────────────────────────────────────── */
+function ShareItemsModal({
+  room,
+  sharedIds,
+  onClose,
+  onSaved,
+}: {
+  room: Room;
+  sharedIds: string[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [items, setItems] = useState<WardrobeItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(sharedIds));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    fetchAllWardrobeItems()
+      .then((data) => {
+        if (!active) return;
+        // Items marked "Share in Rooms" first
+        setItems([...data].sort((a, b) => Number(b.is_shared) - Number(a.is_shared)));
+      })
+      .catch((err) => active && setError(err instanceof Error ? err.message : "Failed to load your closet."))
+      .finally(() => active && setLoading(false));
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const toggle = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await setMySharedItems(room.id, [...selected]);
+      onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update shared items.");
+      setSaving(false);
+    }
+  };
+
+  const original = new Set(sharedIds);
+  const changes =
+    [...selected].filter((id) => !original.has(id)).length +
+    sharedIds.filter((id) => !selected.has(id)).length;
+
+  return (
+    <div
+      style={overlayStyle}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        className="panel"
+        style={{ padding: 28, width: "100%", maxWidth: 560, maxHeight: "86vh", display: "flex", flexDirection: "column" }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: 6,
+          }}
+        >
+          <div>
+            <div className="eyebrow">Share with {room.name}</div>
+            <h2 style={{ fontFamily: "var(--font-serif)", fontSize: 22, fontWeight: 500 }}>
+              Choose items to share
+            </h2>
+          </div>
+          <button className="icon-btn" onClick={onClose} aria-label="Close">
+            <CloseIcon />
           </button>
         </div>
+        <p style={{ fontSize: 12.5, color: "var(--brown-soft)", marginBottom: 16 }}>
+          Members of this room can see the items you tick. Everything else in your closet stays private.
+          Unticking an item stops sharing it; it stays in your closet.
+        </p>
+
+        <div style={{ overflowY: "auto", flex: 1, minHeight: 120, marginBottom: 16 }}>
+          {loading ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--brown-soft)" }}>
+              <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />
+              Loading your closet…
+            </div>
+          ) : items.length === 0 ? (
+            <EmptyState
+              icon={Shirt}
+              title="Your closet is empty"
+              description="Add items to your closet first, then share them here."
+            />
+          ) : (
+            <ul id="share-item-list" style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+              {items.map((item) => (
+                <li key={item.id}>
+                  <label
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 12,
+                      padding: "8px 10px",
+                      borderRadius: "var(--r-md)",
+                      border: `1px solid ${selected.has(item.id) ? "var(--espresso)" : "var(--border-light)"}`,
+                      background: selected.has(item.id) ? "var(--cream-dark)" : "var(--white)",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selected.has(item.id)}
+                      onChange={() => toggle(item.id)}
+                      aria-label={`Share ${item.name}`}
+                    />
+                    <div
+                      style={{
+                        width: 44,
+                        height: 44,
+                        borderRadius: "var(--r-sm, 6px)",
+                        background: "var(--cream-mid)",
+                        overflow: "hidden",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {item.image_url && (
+                        <img
+                          src={item.image_url}
+                          alt=""
+                          loading="lazy"
+                          style={{ width: "100%", height: "100%", objectFit: "contain" }}
+                        />
+                      )}
+                    </div>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div className="truncate" style={{ fontSize: 13.5, fontWeight: 600 }}>
+                        {item.name}
+                      </div>
+                      <div style={{ fontSize: 11.5, color: "var(--brown-muted)", textTransform: "capitalize" }}>
+                        {item.subcategory || getNormalizedCategory(item)}
+                        {item.is_shared ? " · marked shareable" : ""}
+                      </div>
+                    </div>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        {error && (
+          <div style={{ marginBottom: 12 }}>
+            <ErrorNote message={error} />
+          </div>
+        )}
+
+        <button
+          className="btn btn-primary"
+          style={{ width: "100%" }}
+          disabled={saving || loading || changes === 0}
+          onClick={handleSave}
+          id="share-items-save"
+        >
+          {saving ? (
+            <>
+              <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />
+              Saving…
+            </>
+          ) : changes === 0 ? (
+            `${selected.size} item${selected.size !== 1 ? "s" : ""} shared`
+          ) : (
+            `Save (${selected.size} shared)`
+          )}
+        </button>
       </div>
     </div>
   );
