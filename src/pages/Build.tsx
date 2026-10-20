@@ -31,6 +31,7 @@ import { analyseGarmentImage, encodeImageForAnalysis } from "../services/geminiS
 import type { GarmentAnalysis } from "../services/geminiService";
 import { uploadGarmentImage, createWardrobeItem } from "../services/wardrobeService";
 import { isolateGarment } from "../services/imageIsolationService";
+import { prepareOriginalForStorage } from "../utils/imageFiles";
 import { getNormalizedCategory } from "../utils/category";
 import "../App.css";
 
@@ -159,6 +160,13 @@ function isImageFile(f: File): boolean {
 }
 
 /* ─── Helpers ─────────────────────────────────────────────────── */
+/** Necklaces, earrings, belts… cover little of their bounding box */
+function isThinItem(a: GarmentAnalysis | null | undefined): boolean {
+  if (!a) return false;
+  const cat = getNormalizedCategory({ category: a.major_category, subcategory: a.subcategory, name: a.suggested_name });
+  return cat === "jewellery" || cat === "accessories";
+}
+
 function mapAnalysisToForm(a: GarmentAnalysis): Partial<GarmentForm> {
   const category = getNormalizedCategory({
     category: a.major_category,
@@ -235,7 +243,7 @@ function SingleItemMode() {
     // Analysis first (≈2s) so its bounding box can guide background removal;
     // background removal runs either way, even if analysis fails.
     const result = await runAnalysis(f);
-    await runIsolation(f, result?.box_2d);
+    await runIsolation(f, result?.box_2d, isThinItem(result));
   };
 
   const runAnalysis = async (f: File): Promise<GarmentAnalysis | null> => {
@@ -256,11 +264,11 @@ function SingleItemMode() {
     }
   };
 
-  const runIsolation = async (f: File, box2d?: [number, number, number, number]) => {
+  const runIsolation = async (f: File, box2d?: [number, number, number, number], thinItem = false) => {
     setIsolationState("isolating");
     setIsolationError(null);
     try {
-      const iso = await isolateGarment(f, box2d);
+      const iso = await isolateGarment(f, box2d, { thinItem });
       setIsolatedFile(iso.file);
       setPreviewUrl(iso.previewUrl);
       setIsolationQuality(iso.quality);
@@ -300,6 +308,11 @@ function SingleItemMode() {
       let imageUrl: string | undefined;
       // Save the version the user is looking at
       const fileToUpload = viewMode === "isolated" && isolatedFile ? isolatedFile : file;
+      // Keep the untouched photo too whenever the cut-out is the one shown
+      let originalUrl: string | undefined;
+      if (file && fileToUpload && fileToUpload !== file) {
+        originalUrl = await uploadGarmentImage(await prepareOriginalForStorage(file));
+      }
       if (fileToUpload) imageUrl = await uploadGarmentImage(fileToUpload);
       await createWardrobeItem(
         {
@@ -316,7 +329,8 @@ function SingleItemMode() {
           notes: form.notes || undefined,
           is_shared: form.is_shared,
         },
-        imageUrl
+        imageUrl,
+        originalUrl
       );
       setSaveState("saved");
       setTimeout(() => navigate("/closet"), 1600);
@@ -510,7 +524,7 @@ function SingleItemMode() {
                 <button
                   className="btn btn-secondary btn-sm"
                   type="button"
-                  onClick={() => file && runIsolation(file, analysis?.box_2d)}
+                  onClick={() => file && runIsolation(file, analysis?.box_2d, isThinItem(analysis))}
                 >
                   Retry background removal
                 </button>
@@ -896,10 +910,10 @@ function BatchMode() {
     }
   };
 
-  const runItemIsolation = async (id: string, file: File, box2d?: [number, number, number, number]) => {
+  const runItemIsolation = async (id: string, file: File, box2d?: [number, number, number, number], thinItem = false) => {
     patchItem(id, { isolationStatus: "isolating", isolationError: null });
     try {
-      const iso = await isolateGarment(file, box2d);
+      const iso = await isolateGarment(file, box2d, { thinItem });
       patchItem(id, {
         isolationStatus: "done",
         isolatedFile: iso.file,
@@ -921,7 +935,7 @@ function BatchMode() {
   // Background removal runs whether or not the analysis succeeds
   const analyseItem = async (id: string, file: File) => {
     const result = await runItemAnalysis(id, file);
-    await runItemIsolation(id, file, result?.box_2d);
+    await runItemIsolation(id, file, result?.box_2d, isThinItem(result));
   };
 
   const setUseIsolated = (id: string, useIsolated: boolean) => {
@@ -1016,6 +1030,10 @@ function BatchMode() {
         const item = approvedItems[i];
         setSaveProgress({ current: i + 1, total: approvedItems.length });
         const fileToUpload = item.useIsolated && item.isolatedFile ? item.isolatedFile : item.file;
+        const originalUrl =
+          fileToUpload !== item.file
+            ? await uploadGarmentImage(await prepareOriginalForStorage(item.file))
+            : undefined;
         const imageUrl = await uploadGarmentImage(fileToUpload);
         await createWardrobeItem(
           {
@@ -1032,7 +1050,8 @@ function BatchMode() {
             notes: item.form.notes || undefined,
             is_shared: item.form.is_shared,
           },
-          imageUrl
+          imageUrl,
+          originalUrl
         );
         // Mark as saved right away so a retry after a later failure skips it
         patchItem(item.id, { saved: true });

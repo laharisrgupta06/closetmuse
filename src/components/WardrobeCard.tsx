@@ -9,6 +9,8 @@ interface WardrobeCardProps {
   onSelect?: (item: WardrobeItem) => void;
   onEdit?: (item: WardrobeItem) => void;
   onDelete?: (item: WardrobeItem) => void;
+  /** Clicking the card opens the item (details view) */
+  onOpen?: (item: WardrobeItem) => void;
   selected?: boolean;
   selectable?: boolean;
   /** Extra content under the item details (e.g. who shared it in a Room) */
@@ -21,6 +23,7 @@ export default function WardrobeCard({
   onSelect,
   onEdit,
   onDelete,
+  onOpen,
   selected = false,
   selectable = false,
   footer,
@@ -28,10 +31,13 @@ export default function WardrobeCard({
   const handleClick = () => {
     if (selectable) {
       onSelect?.(item);
+    } else if (onOpen) {
+      onOpen(item);
     } else if (onEdit) {
       onEdit(item);
     }
   };
+  const clickable = selectable || Boolean(onOpen) || Boolean(onEdit);
 
   return (
     <div
@@ -39,13 +45,14 @@ export default function WardrobeCard({
       style={
         selected
           ? { outline: "2px solid var(--espresso)", outlineOffset: "2px" }
-          : { cursor: selectable || onEdit ? "pointer" : "default" }
+          : { cursor: clickable ? "pointer" : "default" }
       }
       onClick={handleClick}
-      role={selectable || onEdit ? "button" : undefined}
-      tabIndex={selectable || onEdit ? 0 : undefined}
+      role={clickable ? "button" : undefined}
+      aria-label={clickable ? `${item.name}: view details` : undefined}
+      tabIndex={clickable ? 0 : undefined}
       onKeyDown={
-        selectable || onEdit
+        clickable
           ? (e) => {
               if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();

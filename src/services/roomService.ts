@@ -130,7 +130,71 @@ export async function joinRoom(inviteCode: string): Promise<Room> {
 export async function fetchRoomMembers(roomId: string): Promise<RoomMemberProfile[]> {
   const { data, error } = await supabase.rpc("get_room_members", { p_room: roomId });
   if (error) throw roomError(error, "Failed to load members.");
-  return (data ?? []) as RoomMemberProfile[];
+  const members = (data ?? []) as (Omit<RoomMemberProfile, "shared_count"> & { shared_count?: number })[];
+
+  // Before migration 006 the function has no per-member count: count the
+  // room's shares in the database instead (RLS limits this to the room)
+  if (members.some((m) => typeof m.shared_count !== "number")) {
+    const { data: shares, error: sharesError } = await supabase
+      .from("room_items")
+      .select("shared_by")
+      .eq("room_id", roomId);
+    if (sharesError) throw roomError(sharesError, "Failed to load members.");
+    const counts = new Map<string, number>();
+    for (const s of shares ?? []) counts.set(s.shared_by, (counts.get(s.shared_by) ?? 0) + 1);
+    return members.map((m) => ({ ...m, shared_count: counts.get(m.user_id) ?? 0 }));
+  }
+  return members as RoomMemberProfile[];
+}
+
+/**
+ * Items one member shared into one room, newest share first. Both filters run
+ * in the database; RLS only returns items shared into rooms the caller is in.
+ */
+export async function fetchMemberSharedItems(roomId: string, memberId: string): Promise<SharedRoomItem[]> {
+  const { data: shares, error } = await supabase
+    .from("room_items")
+    .select("item_id, shared_by, shared_at")
+    .eq("room_id", roomId)
+    .eq("shared_by", memberId)
+    .order("shared_at", { ascending: false });
+  if (error) throw roomError(error, "Failed to load this wardrobe.");
+  if (!shares || shares.length === 0) return [];
+
+  const { data: items, error: itemsError } = await supabase
+    .from("wardrobe_items")
+    .select("*")
+    .eq("user_id", memberId)
+    .in("id", shares.map((s) => s.item_id as string));
+  if (itemsError) throw roomError(itemsError, "Failed to load this wardrobe.");
+
+  const byId = new Map(((items ?? []) as WardrobeItem[]).map((i) => [i.id, i]));
+  return shares
+    .map((s) => ({ item: byId.get(s.item_id as string) ?? null, shared_by: s.shared_by as string, shared_at: s.shared_at as string }))
+    .filter((r): r is SharedRoomItem => Boolean(r.item));
+}
+
+/** Rooms the signed-in user has shared one of their own items into */
+export async function fetchItemRooms(itemId: string): Promise<{ id: string; name: string }[]> {
+  const userId = await getUserId();
+  const { data: shares, error } = await supabase
+    .from("room_items")
+    .select("room_id")
+    .eq("item_id", itemId)
+    .eq("shared_by", userId);
+  if (error) {
+    // Rooms not set up yet: the item simply isn't shared anywhere
+    if (["PGRST205", "42P01"].includes(error.code ?? "")) return [];
+    throw roomError(error, "Failed to load sharing details.");
+  }
+  if (!shares || shares.length === 0) return [];
+
+  const { data: rooms, error: roomsError } = await supabase
+    .from("rooms")
+    .select("id, name")
+    .in("id", shares.map((s) => s.room_id as string));
+  if (roomsError) throw roomError(roomsError, "Failed to load sharing details.");
+  return (rooms ?? []) as { id: string; name: string }[];
 }
 
 /** Items shared into a room, newest first */

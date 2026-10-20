@@ -60,7 +60,9 @@ export async function getUserId(): Promise<string> {
  */
 export async function createWardrobeItem(
   item: NewWardrobeItem,
-  imageUrl?: string
+  imageUrl?: string,
+  /** The untouched upload, when imageUrl is a processed (background-removed) version */
+  originalImageUrl?: string
 ): Promise<WardrobeItem> {
   const userId = await getUserId();
   const payload = {
@@ -81,11 +83,16 @@ export async function createWardrobeItem(
     is_shared: item.is_shared ?? false,
   };
 
-  const { data, error } = await supabase
-    .from("wardrobe_items")
-    .insert(payload)
-    .select("*")
-    .single();
+  const insert = (row: Record<string, unknown>) =>
+    supabase.from("wardrobe_items").insert(row).select("*").single();
+
+  let { data, error } = await insert(
+    originalImageUrl ? { ...payload, original_image_url: originalImageUrl } : payload
+  );
+  // Before migration 006 the original_image_url column doesn't exist yet
+  if (error && originalImageUrl && (error.code === "PGRST204" || error.code === "42703")) {
+    ({ data, error } = await insert(payload));
+  }
 
   if (error) throw new Error(`Database insert failed: ${error.message}`);
   return data as WardrobeItem;
@@ -152,7 +159,7 @@ export async function deleteWardrobeItem(id: string, imageUrl?: string): Promise
     .delete()
     .eq("id", id)
     .eq("user_id", userId)
-    .select("id, image_url");
+    .select("*");
 
   if (error) throw new Error(`Database delete failed: ${error.message}`);
   if (!data || data.length === 0) {
@@ -161,15 +168,15 @@ export async function deleteWardrobeItem(id: string, imageUrl?: string): Promise
     );
   }
 
-  // Best-effort image cleanup: the item itself is already gone
-  const path = storagePathFromUrl(data[0].image_url ?? imageUrl);
-  if (path) {
-    const { data: removed, error: storageError } = await supabase.storage
-      .from(BUCKET)
-      .remove([path]);
-    if (storageError || !removed?.length) {
+  // Best-effort image cleanup (processed image and kept original): the item itself is already gone
+  const row = data[0] as { image_url?: string | null; original_image_url?: string | null };
+  const paths = [...new Set([row.image_url ?? imageUrl, row.original_image_url].map(storagePathFromUrl))]
+    .filter((p): p is string => Boolean(p));
+  if (paths.length > 0) {
+    const { data: removed, error: storageError } = await supabase.storage.from(BUCKET).remove(paths);
+    if (storageError || (removed?.length ?? 0) < paths.length) {
       console.warn(
-        `Image "${path}" was not removed from storage (non-fatal):`,
+        `Image file(s) not removed from storage (non-fatal): ${paths.join(", ")}`,
         storageError?.message ?? "not permitted or already removed"
       );
     }

@@ -4,54 +4,42 @@ import {
   Plus,
   Key,
   Users,
-  Shirt,
-  SlidersHorizontal,
   RefreshCw,
-  Copy,
   Check,
   Loader2,
   Share2,
   Lock,
   AlertCircle,
+  ChevronLeft,
+  Shirt,
 } from "lucide-react";
 import Navbar from "../components/Navbar";
 import EmptyState from "../components/EmptyState";
 import RoomCard, { RoomCardSkeleton } from "../components/RoomCard";
-import WardrobeCard, { WardrobeCardSkeleton } from "../components/WardrobeCard";
+import RoomOverview from "../components/rooms/RoomOverview";
+import MemberWardrobe from "../components/rooms/MemberWardrobe";
+import RoomChat from "../components/rooms/RoomChat";
+import BorrowRequests from "../components/rooms/BorrowRequests";
 import { useAuth } from "../contexts/AuthContext";
 import {
   createRoom,
+  fetchMemberSharedItems,
   fetchMyRooms,
-  fetchRoomItems,
   fetchRoomMembers,
   joinRoom,
   setMySharedItems,
-  unshareItem,
 } from "../services/roomService";
 import { fetchAllWardrobeItems } from "../services/wardrobeService";
 import { getNormalizedCategory } from "../utils/category";
-import type {
-  Room,
-  RoomMemberProfile,
-  SharedRoomItem,
-  WardrobeItem,
-  LoadingState,
-} from "../types";
+import type { Room, RoomMemberProfile, WardrobeItem, LoadingState } from "../types";
 import "../App.css";
 
-type ActiveView = "rooms" | "room-detail";
-
-const CATEGORY_FILTERS = [
-  { value: "all", label: "All" },
-  { value: "tops", label: "Tops" },
-  { value: "bottoms", label: "Bottoms" },
-  { value: "dresses", label: "Dresses" },
-  { value: "outerwear", label: "Outerwear" },
-  { value: "footwear", label: "Footwear" },
-  { value: "bags", label: "Bags" },
-  { value: "jewellery", label: "Jewellery" },
-  { value: "accessories", label: "Accessories" },
-];
+/** Where the user is inside a room */
+type RoomView =
+  | { kind: "overview" }
+  | { kind: "member"; memberId: string }
+  | { kind: "chat" }
+  | { kind: "requests" };
 
 const overlayStyle = {
   position: "fixed",
@@ -101,11 +89,9 @@ function CloseIcon() {
 
 export default function Rooms() {
   const { user } = useAuth();
-  const [view, setView] = useState<ActiveView>("rooms");
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
+  const [roomView, setRoomView] = useState<RoomView>({ kind: "overview" });
   const [roomSearch, setRoomSearch] = useState("");
-  const [itemSearch, setItemSearch] = useState("");
-  const [activeFilter, setActiveFilter] = useState("all");
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showJoinModal, setShowJoinModal] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
@@ -114,12 +100,12 @@ export default function Rooms() {
   const [roomsLoading, setRoomsLoading] = useState<LoadingState>("loading");
   const [roomsError, setRoomsError] = useState<string | null>(null);
 
-  const [roomItems, setRoomItems] = useState<SharedRoomItem[]>([]);
   const [members, setMembers] = useState<RoomMemberProfile[]>([]);
-  const [itemsLoading, setItemsLoading] = useState<LoadingState>("idle");
+  const [membersLoading, setMembersLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  // Bumped after sharing changes so an open member wardrobe reloads
+  const [shareVersion, setShareVersion] = useState(0);
 
   const loadRooms = useCallback(async () => {
     setRoomsLoading("loading");
@@ -133,20 +119,15 @@ export default function Rooms() {
     }
   }, []);
 
-  const loadRoomDetail = useCallback(async (roomId: string) => {
-    setItemsLoading("loading");
+  const loadMembers = useCallback(async (roomId: string) => {
+    setMembersLoading(true);
     setDetailError(null);
     try {
-      const [items, people] = await Promise.all([
-        fetchRoomItems(roomId),
-        fetchRoomMembers(roomId),
-      ]);
-      setRoomItems(items);
-      setMembers(people);
-      setItemsLoading("success");
+      setMembers(await fetchRoomMembers(roomId));
     } catch (err) {
       setDetailError(err instanceof Error ? err.message : "Failed to load this room.");
-      setItemsLoading("error");
+    } finally {
+      setMembersLoading(false);
     }
   }, []);
 
@@ -169,22 +150,26 @@ export default function Rooms() {
     };
   }, []);
 
-  const handleRoomSelect = (room: Room) => {
+  const openRoom = (room: Room) => {
     setSelectedRoom(room);
-    setView("room-detail");
-    setRoomItems([]);
+    setRoomView({ kind: "overview" });
     setMembers([]);
-    setItemSearch("");
-    setActiveFilter("all");
     setNotice(null);
-    loadRoomDetail(room.id);
+    loadMembers(room.id);
+  };
+
+  const closeRoom = () => {
+    setSelectedRoom(null);
+    setRoomView({ kind: "overview" });
+    setNotice(null);
+    loadRooms();
   };
 
   const handleRoomReady = (room: Room, how: "created" | "joined") => {
     setShowCreateModal(false);
     setShowJoinModal(false);
     loadRooms();
-    handleRoomSelect(room);
+    openRoom(room);
     setNotice(
       how === "created"
         ? `Room created. Share the invite code ${room.invite_code} so others can join.`
@@ -192,54 +177,26 @@ export default function Rooms() {
     );
   };
 
-  const handleCopyCode = async () => {
-    if (!selectedRoom?.invite_code) return;
-    try {
-      await navigator.clipboard.writeText(selectedRoom.invite_code);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Clipboard blocked: the code is visible to copy manually
-    }
-  };
-
-  const handleStopSharing = async (item: WardrobeItem) => {
+  const refreshSharing = () => {
     if (!selectedRoom) return;
-    if (!confirm(`Stop sharing "${item.name}" in ${selectedRoom.name}? It stays in your closet.`)) {
-      return;
-    }
-    try {
-      await unshareItem(selectedRoom.id, item.id);
-      setRoomItems((prev) => prev.filter((r) => r.item.id !== item.id));
-      loadRooms();
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "Could not stop sharing this item.");
-    }
-  };
-
-  const memberName = (userId: string) => {
-    if (userId === user?.id) return "You";
-    return members.find((m) => m.user_id === userId)?.display_name ?? "A member";
+    loadMembers(selectedRoom.id);
+    setShareVersion((v) => v + 1);
   };
 
   const filteredRooms = rooms.filter((r) =>
     r.name.toLowerCase().includes(roomSearch.toLowerCase())
   );
 
-  const filteredItems =
-    activeFilter === "all"
-      ? roomItems
-      : roomItems.filter((r) => getNormalizedCategory(r.item) === activeFilter);
-
-  const searchedItems = itemSearch
-    ? filteredItems.filter((r) =>
-        r.item.name.toLowerCase().includes(itemSearch.toLowerCase())
-      )
-    : filteredItems;
-
-  const mySharedIds = roomItems
-    .filter((r) => r.shared_by === user?.id)
-    .map((r) => r.item.id);
+  const viewedMember =
+    roomView.kind === "member" ? members.find((m) => m.user_id === roomView.memberId) : undefined;
+  const subTitle =
+    roomView.kind === "member"
+      ? viewedMember ? (viewedMember.is_me ? "Your wardrobe" : `${viewedMember.display_name}'s wardrobe`) : "Wardrobe"
+      : roomView.kind === "chat"
+        ? "Room chat"
+        : roomView.kind === "requests"
+          ? "Borrow requests"
+          : null;
 
   return (
     <div className="app-shell">
@@ -247,31 +204,39 @@ export default function Rooms() {
 
       <main className="page-content">
         <div className="page">
-          {/* Header */}
+          {/* Header with breadcrumbs: Rooms › Room › Member / Chat / Requests */}
           <div className="page-header">
-            <div className="page-header-left">
-              <div className="eyebrow">Shared Wardrobes</div>
+            <div className="page-header-left" style={{ minWidth: 0 }}>
+              {selectedRoom ? (
+                <nav className="room-breadcrumbs" aria-label="Breadcrumb">
+                  <button type="button" onClick={closeRoom}>Rooms</button>
+                  <span aria-hidden="true">›</span>
+                  {subTitle ? (
+                    <>
+                      <button type="button" onClick={() => setRoomView({ kind: "overview" })}>{selectedRoom.name}</button>
+                      <span aria-hidden="true">›</span>
+                      <span aria-current="page">{subTitle}</span>
+                    </>
+                  ) : (
+                    <span aria-current="page">{selectedRoom.name}</span>
+                  )}
+                </nav>
+              ) : (
+                <div className="eyebrow">Shared Wardrobes</div>
+              )}
               <h1 className="page-title">
-                {view === "room-detail" && selectedRoom
-                  ? selectedRoom.name
-                  : "Rooms"}
+                {selectedRoom ? (subTitle ?? selectedRoom.name) : "Rooms"}
               </h1>
             </div>
 
-            <div style={{ display: "flex", gap: 10, flexShrink: 0 }}>
-              {view === "rooms" ? (
+            <div style={{ display: "flex", gap: 10, flexShrink: 0, flexWrap: "wrap" }}>
+              {!selectedRoom ? (
                 <>
-                  <button
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => setShowJoinModal(true)}
-                  >
+                  <button className="btn btn-secondary btn-sm" onClick={() => setShowJoinModal(true)}>
                     <Key size={13} />
                     Join Room
                   </button>
-                  <button
-                    className="btn btn-primary btn-sm"
-                    onClick={() => setShowCreateModal(true)}
-                  >
+                  <button className="btn btn-primary btn-sm" onClick={() => setShowCreateModal(true)}>
                     <Plus size={13} />
                     Create Room
                   </button>
@@ -280,18 +245,12 @@ export default function Rooms() {
                 <>
                   <button
                     className="btn btn-ghost btn-sm"
-                    onClick={() => {
-                      setView("rooms");
-                      setSelectedRoom(null);
-                    }}
+                    onClick={() => (roomView.kind === "overview" ? closeRoom() : setRoomView({ kind: "overview" }))}
                   >
-                    Back to Rooms
+                    <ChevronLeft size={14} />
+                    {roomView.kind === "overview" ? "All rooms" : "Room overview"}
                   </button>
-                  <button
-                    className="btn btn-primary btn-sm"
-                    onClick={() => setShowShareModal(true)}
-                    id="share-items-btn"
-                  >
+                  <button className="btn btn-primary btn-sm" onClick={() => setShowShareModal(true)} id="share-items-btn">
                     <Share2 size={13} />
                     Share items
                   </button>
@@ -301,9 +260,8 @@ export default function Rooms() {
           </div>
 
           {/* ── ROOMS LIST ── */}
-          {view === "rooms" && (
+          {!selectedRoom && (
             <>
-              {/* Search */}
               <div className="filter-bar" style={{ marginBottom: 28 }}>
                 <div className="filter-bar-left">
                   <div className="search-input-wrap">
@@ -349,17 +307,11 @@ export default function Rooms() {
                   action={
                     rooms.length === 0 ? (
                       <div style={{ display: "flex", gap: 8 }}>
-                        <button
-                          className="btn btn-secondary btn-sm"
-                          onClick={() => setShowJoinModal(true)}
-                        >
+                        <button className="btn btn-secondary btn-sm" onClick={() => setShowJoinModal(true)}>
                           <Key size={13} />
                           Join Room
                         </button>
-                        <button
-                          className="btn btn-primary btn-sm"
-                          onClick={() => setShowCreateModal(true)}
-                        >
+                        <button className="btn btn-primary btn-sm" onClick={() => setShowCreateModal(true)}>
                           <Plus size={13} />
                           Create Room
                         </button>
@@ -370,317 +322,58 @@ export default function Rooms() {
               ) : (
                 <div className="rooms-grid">
                   {filteredRooms.map((room) => (
-                    <RoomCard
-                      key={room.id}
-                      room={room}
-                      onClick={handleRoomSelect}
-                    />
+                    <RoomCard key={room.id} room={room} onClick={openRoom} />
                   ))}
                 </div>
               )}
             </>
           )}
 
-          {/* ── ROOM DETAIL ── */}
-          {view === "room-detail" && selectedRoom && (
-            <div className="closet-layout">
-              {/* Main: item grid */}
-              <div className="closet-main">
-                {/* Room meta */}
-                <div
-                  className="card card-sm"
-                  style={{ marginBottom: 24, background: "var(--cream-dark)" }}
-                >
-                  <div
-                    style={{ display: "flex", alignItems: "center", gap: 12 }}
-                  >
-                    <div className="empty-icon" style={{ width: 40, height: 40, marginBottom: 0 }}>
-                      <Users size={18} />
-                    </div>
-                    <div>
-                      <div style={{ fontSize: 14, fontWeight: 600 }}>
-                        {members.length || selectedRoom.member_count} member
-                        {(members.length || selectedRoom.member_count) !== 1 ? "s" : ""}
-                        {" · "}
-                        {roomItems.length} shared item{roomItems.length !== 1 ? "s" : ""}
-                      </div>
-                      {selectedRoom.description && (
-                        <div
-                          style={{
-                            fontSize: 13,
-                            color: "var(--brown-soft)",
-                            marginTop: 2,
-                          }}
-                        >
-                          {selectedRoom.description}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {notice && (
-                  <div
-                    role="status"
-                    id="room-notice"
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      gap: 8,
-                      padding: "10px 12px",
-                      marginBottom: 16,
-                      background: "var(--gold-pale)",
-                      border: "1px solid var(--border)",
-                      borderRadius: "var(--r-md)",
-                      fontSize: 13,
-                      color: "var(--espresso)",
-                    }}
-                  >
-                    <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <Check size={14} style={{ flexShrink: 0 }} />
-                      {notice}
-                    </span>
-                    <button
-                      type="button"
-                      className="icon-btn"
-                      onClick={() => setNotice(null)}
-                      aria-label="Dismiss"
-                      style={{ width: 24, height: 24 }}
-                    >
-                      <CloseIcon />
-                    </button>
-                  </div>
-                )}
-
-                {detailError && (
-                  <div style={{ marginBottom: 16 }}>
-                    <ErrorNote message={detailError} />
-                  </div>
-                )}
-
-                {/* Filter bar */}
-                <div className="filter-bar">
-                  <div className="filter-bar-left">
-                    <div className="search-input-wrap">
-                      <Search className="search-icon" size={15} />
-                      <input
-                        className="search-input"
-                        type="search"
-                        placeholder="Search items..."
-                        value={itemSearch}
-                        onChange={(e) => setItemSearch(e.target.value)}
-                      />
-                    </div>
-                  </div>
-                  <div className="filter-chips">
-                    {CATEGORY_FILTERS.map((f) => (
-                      <button
-                        key={f.value}
-                        className={`filter-chip${activeFilter === f.value ? " active" : ""}`}
-                        onClick={() => setActiveFilter(f.value)}
-                      >
-                        {f.label}
-                      </button>
-                    ))}
-                  </div>
-                  <button className="btn btn-secondary btn-sm">
-                    <SlidersHorizontal size={14} />
-                    Sort
+          {/* ── INSIDE A ROOM ── */}
+          {selectedRoom && (
+            <>
+              {notice && (
+                <div className="room-notice" role="status" id="room-notice">
+                  <span><Check size={14} /> {notice}</span>
+                  <button type="button" className="icon-btn" onClick={() => setNotice(null)} aria-label="Dismiss">
+                    <CloseIcon />
                   </button>
                 </div>
-
-                {/* Items */}
-                {itemsLoading === "loading" ? (
-                  <div className="item-grid">
-                    {Array.from({ length: 6 }).map((_, i) => (
-                      <WardrobeCardSkeleton key={i} />
-                    ))}
-                  </div>
-                ) : searchedItems.length === 0 && roomItems.length === 0 ? (
-                  <EmptyState
-                    icon={Shirt}
-                    title="No items shared yet"
-                    description="Nothing from anyone's closet is visible here until they choose to share it."
-                    action={
-                      <button
-                        className="btn btn-secondary btn-sm"
-                        onClick={() => setShowShareModal(true)}
-                      >
-                        <Share2 size={13} />
-                        Share items
-                      </button>
-                    }
-                  />
-                ) : searchedItems.length === 0 ? (
-                  <EmptyState
-                    icon={Search}
-                    title="No items found"
-                    description={
-                      itemSearch
-                        ? `No items match "${itemSearch}".`
-                        : "No shared items in this category."
-                    }
-                  />
-                ) : (
-                  <div className="item-grid">
-                    {searchedItems.map(({ item, shared_by }) => (
-                      <WardrobeCard
-                        key={item.id}
-                        item={item}
-                        footer={
-                          <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "space-between",
-                              gap: 6,
-                              marginTop: 6,
-                              fontSize: 11.5,
-                              color: "var(--brown-muted)",
-                            }}
-                          >
-                            <span className="truncate">Shared by {memberName(shared_by)}</span>
-                            {shared_by === user?.id && (
-                              <button
-                                type="button"
-                                className="btn btn-ghost btn-sm"
-                                style={{ fontSize: 11, padding: "2px 6px" }}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleStopSharing(item);
-                                }}
-                              >
-                                Stop sharing
-                              </button>
-                            )}
-                          </div>
-                        }
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Sidebar: Room info + requests */}
-              <div className="closet-sidebar">
-                <div className="panel" style={{ padding: 24 }}>
-                  <div className="eyebrow" style={{ marginBottom: 14 }}>
-                    Room
-                  </div>
-                  <div
-                    style={{
-                      fontSize: 20,
-                      fontFamily: "var(--font-serif)",
-                      fontWeight: 500,
-                      marginBottom: 16,
-                    }}
-                  >
-                    {selectedRoom.name}
-                  </div>
-
-                  {/* Invite code */}
-                  {selectedRoom.invite_code && (
-                    <div style={{ marginBottom: 16 }}>
-                      <div style={{ fontSize: 12, color: "var(--brown-muted)", marginBottom: 6 }}>
-                        Invite code — share it with people you want in this room
-                      </div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <code
-                          id="room-invite-code"
-                          style={{
-                            flex: 1,
-                            padding: "8px 12px",
-                            borderRadius: "var(--r-md)",
-                            background: "var(--cream-dark)",
-                            border: "1px solid var(--border)",
-                            fontSize: 16,
-                            letterSpacing: 3,
-                            textAlign: "center",
-                            fontWeight: 600,
-                          }}
-                        >
-                          {selectedRoom.invite_code}
-                        </code>
-                        <button
-                          type="button"
-                          className="icon-btn"
-                          onClick={handleCopyCode}
-                          aria-label="Copy invite code"
-                          title="Copy invite code"
-                        >
-                          {copied ? <Check size={15} /> : <Copy size={15} />}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="divider" />
-
-                  {/* Borrow requests */}
-                  <div className="section-header" style={{ marginBottom: 12 }}>
-                    <span className="section-title">Requests</span>
-                  </div>
-                  <EmptyState
-                    icon={Shirt}
-                    title="No requests"
-                    description="Borrow requests from room members will appear here."
-                  />
-
-                  <div className="divider" />
-
-                  {/* Members */}
-                  <div className="section-header" style={{ marginBottom: 12 }}>
-                    <span className="section-title">Members</span>
-                  </div>
-                  {members.length === 0 ? (
-                    <EmptyState
-                      icon={Users}
-                      title={itemsLoading === "loading" ? "Loading members…" : "No member data"}
-                      description="Room members will appear here."
-                    />
-                  ) : (
-                    <ul
-                      id="room-members"
-                      style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 10 }}
-                    >
-                      {members.map((m) => (
-                        <li key={m.user_id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                          <div
-                            aria-hidden="true"
-                            style={{
-                              width: 30,
-                              height: 30,
-                              borderRadius: "50%",
-                              background: "var(--cream-dark)",
-                              border: "1px solid var(--border)",
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              fontSize: 13,
-                              fontWeight: 600,
-                              color: "var(--espresso)",
-                              flexShrink: 0,
-                            }}
-                          >
-                            {m.display_name.charAt(0).toUpperCase()}
-                          </div>
-                          <div style={{ minWidth: 0 }}>
-                            <div className="truncate" style={{ fontSize: 13.5, fontWeight: 600 }}>
-                              {m.display_name}
-                              {m.is_me ? " (you)" : ""}
-                            </div>
-                            <div style={{ fontSize: 11.5, color: "var(--brown-muted)", textTransform: "capitalize" }}>
-                              {m.role}
-                            </div>
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
+              )}
+              {detailError && (
+                <div style={{ marginBottom: 16 }}>
+                  <ErrorNote message={detailError} />
                 </div>
-              </div>
-            </div>
+              )}
+
+              {roomView.kind === "overview" && (
+                <RoomOverview
+                  room={selectedRoom}
+                  members={members}
+                  loading={membersLoading}
+                  onOpenMember={(m) => setRoomView({ kind: "member", memberId: m.user_id })}
+                  onOpenChat={() => setRoomView({ kind: "chat" })}
+                  onOpenRequests={() => setRoomView({ kind: "requests" })}
+                  onShareItems={() => setShowShareModal(true)}
+                />
+              )}
+
+              {roomView.kind === "member" && viewedMember && (
+                <MemberWardrobe
+                  key={`${viewedMember.user_id}-${shareVersion}`}
+                  room={selectedRoom}
+                  member={viewedMember}
+                  onChanged={refreshSharing}
+                />
+              )}
+              {roomView.kind === "member" && !viewedMember && !membersLoading && (
+                <EmptyState icon={Users} title="Member not found" description="They may have left this room." />
+              )}
+
+              {roomView.kind === "chat" && <RoomChat room={selectedRoom} members={members} />}
+
+              {roomView.kind === "requests" && <BorrowRequests room={selectedRoom} members={members} />}
+            </>
           )}
         </div>
       </main>
@@ -702,14 +395,14 @@ export default function Rooms() {
       )}
 
       {/* ── SHARE ITEMS MODAL ── */}
-      {showShareModal && selectedRoom && (
+      {showShareModal && selectedRoom && user && (
         <ShareItemsModal
           room={selectedRoom}
-          sharedIds={mySharedIds}
+          userId={user.id}
           onClose={() => setShowShareModal(false)}
           onSaved={() => {
             setShowShareModal(false);
-            loadRoomDetail(selectedRoom.id);
+            refreshSharing();
             loadRooms();
           }}
         />
@@ -962,35 +655,40 @@ function JoinRoomModal({
 /* ─── Share Items Modal ─────────────────────────────────────── */
 function ShareItemsModal({
   room,
-  sharedIds,
+  userId,
   onClose,
   onSaved,
 }: {
   room: Room;
-  sharedIds: string[];
+  userId: string;
   onClose: () => void;
   onSaved: () => void;
 }) {
   const [items, setItems] = useState<WardrobeItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selected, setSelected] = useState<Set<string>>(() => new Set(sharedIds));
+  const [sharedIds, setSharedIds] = useState<string[]>([]);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
-    fetchAllWardrobeItems()
-      .then((data) => {
+    // Your closet, and what you already share in this room (from the database)
+    Promise.all([fetchAllWardrobeItems(), fetchMemberSharedItems(room.id, userId)])
+      .then(([data, shares]) => {
         if (!active) return;
         // Items marked "Share in Rooms" first
         setItems([...data].sort((a, b) => Number(b.is_shared) - Number(a.is_shared)));
+        const ids = shares.map((s) => s.item.id);
+        setSharedIds(ids);
+        setSelected(new Set(ids));
       })
       .catch((err) => active && setError(err instanceof Error ? err.message : "Failed to load your closet."))
       .finally(() => active && setLoading(false));
     return () => {
       active = false;
     };
-  }, []);
+  }, [room.id, userId]);
 
   const toggle = (id: string) =>
     setSelected((prev) => {

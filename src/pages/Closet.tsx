@@ -29,6 +29,7 @@ import {
 } from "../services/outfitService";
 import EditItemModal from "../components/EditItemModal";
 import SavedOutfitModal from "../components/SavedOutfitModal";
+import ItemDetailModal from "../components/ItemDetailModal";
 import { getNormalizedCategory } from "../utils/category";
 import "../App.css";
 
@@ -90,6 +91,7 @@ export default function Closet() {
   const [items, setItems] = useState<WardrobeItem[]>([]);
   const [loadingState, setLoadingState] = useState<LoadingState>("loading");
   const [editingItem, setEditingItem] = useState<WardrobeItem | null>(null);
+  const [detailItem, setDetailItem] = useState<WardrobeItem | null>(null);
 
   // Outfit builder state
   const [outfitSlots, setOutfitSlots] = useState<
@@ -161,39 +163,36 @@ export default function Closet() {
     });
   };
 
+  // Deletes and updates local state; throws on failure (callers confirm first)
+  const removeItem = async (item: WardrobeItem) => {
+    await deleteWardrobeItem(item.id, item.image_url);
+    setItems((prev) => prev.filter((it) => it.id !== item.id));
+    const cat = getNormalizedCategory(item);
+    setOutfitSlots((prev) => {
+      if (prev[cat]?.id === item.id) {
+        const next = { ...prev };
+        delete next[cat];
+        return next;
+      }
+      return prev;
+    });
+    setSavedOutfits((prev) =>
+      prev.map((o) => ({
+        ...o,
+        items: o.items.filter((it) => it.id !== item.id),
+        item_ids: o.item_ids.filter((id) => id !== item.id),
+      }))
+    );
+    setFeedbackMsg({ type: "success", text: `"${item.name}" deleted from your wardrobe.` });
+    setTimeout(() => setFeedbackMsg(null), 3000);
+  };
+
   const handleDeleteItem = async (item: WardrobeItem) => {
     if (!confirm(`Are you sure you want to permanently delete "${item.name}"?`)) {
       return;
     }
     try {
-      await deleteWardrobeItem(item.id, item.image_url);
-      setItems((prev) => prev.filter((it) => it.id !== item.id));
-
-      // Remove from outfit slots if selected
-      const cat = getNormalizedCategory(item);
-      setOutfitSlots((prev) => {
-        if (prev[cat]?.id === item.id) {
-          const next = { ...prev };
-          delete next[cat];
-          return next;
-        }
-        return prev;
-      });
-
-      // Remove from saved outfits in memory
-      setSavedOutfits((prev) =>
-        prev.map((o) => ({
-          ...o,
-          items: o.items.filter((it) => it.id !== item.id),
-          item_ids: o.item_ids.filter((id) => id !== item.id),
-        }))
-      );
-
-      setFeedbackMsg({
-        type: "success",
-        text: `"${item.name}" deleted from your wardrobe.`,
-      });
-      setTimeout(() => setFeedbackMsg(null), 3000);
+      await removeItem(item);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to delete item.";
       alert(msg);
@@ -475,6 +474,7 @@ export default function Closet() {
                     <WardrobeCard
                       key={item.id}
                       item={item}
+                      onOpen={(it) => setDetailItem(it)}
                       onEdit={(it) => setEditingItem(it)}
                       onDelete={(it) => handleDeleteItem(it)}
                     />
@@ -930,6 +930,21 @@ export default function Closet() {
                 handleDeleteOutfit(id);
                 setSelectedSavedOutfit(null);
               }}
+            />
+          )}
+
+          {/* ── ITEM DETAIL MODAL ── */}
+          {detailItem && (
+            <ItemDetailModal
+              item={detailItem}
+              isOwner
+              showSharing
+              onClose={() => setDetailItem(null)}
+              onEdit={(it) => {
+                setDetailItem(null);
+                setEditingItem(it);
+              }}
+              onDelete={removeItem}
             />
           )}
 

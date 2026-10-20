@@ -49,6 +49,8 @@ export interface WardrobeItem {
   brand?: string;
   notes?: string;
   image_url?: string;
+  /** Untouched upload, kept when image_url is a background-removed version */
+  original_image_url?: string | null;
   is_favorite: boolean;
   is_shared: boolean;
   room_ids?: string[];
@@ -99,6 +101,10 @@ export interface RoomMemberProfile {
   role: 'owner' | 'member';
   joined_at: string;
   display_name: string;
+  /** Profile picture from the member's account, when they have one */
+  avatar_url?: string | null;
+  /** Items this member shared into the room */
+  shared_count: number;
   is_me: boolean;
 }
 
@@ -109,16 +115,28 @@ export interface SharedRoomItem {
   shared_at: string;
 }
 
+export type BorrowStatus = 'pending' | 'accepted' | 'declined' | 'cancelled';
+
+/** A row of public.borrow_requests */
 export interface BorrowRequest {
   id: string;
-  item_id: string;
-  requester_id: string;
-  owner_id: string;
   room_id: string;
-  status: 'pending' | 'approved' | 'declined' | 'returned';
-  message?: string;
-  requested_date?: string;
-  return_date?: string;
+  item_id: string;
+  owner_id: string;
+  requester_id: string;
+  status: BorrowStatus;
+  message: string | null;
+  created_at: string;
+  responded_at: string | null;
+  updated_at: string;
+}
+
+/** A row of public.room_messages */
+export interface RoomMessage {
+  id: string;
+  room_id: string;
+  sender_id: string;
+  body: string;
   created_at: string;
 }
 
