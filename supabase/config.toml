@@ -1,0 +1,15 @@
+# Supabase CLI project configuration (only non-default settings).
+
+project_id = "closetmuse"
+
+# Gateway JWT verification only understands the legacy JWT secret, and this
+# project uses the new publishable/secret API keys. Authentication is
+# therefore enforced inside each function (supabase/functions/_shared/auth.ts):
+# every request must carry a valid user access token, checked with
+# supabase.auth.getUser().
+
+[functions.ai-stylist]
+verify_jwt = false
+
+[functions.analyze-garment]
+verify_jwt = false
