@@ -1,0 +1,195 @@
+/**
+ * wardrobeService.ts
+ * Handles Supabase Storage image uploads and wardrobe_items CRUD.
+ * All data operations are scoped to the authenticated user.
+ */
+import { supabase } from "../lib/supabase";
+import type { WardrobeItem, GarmentCategory, GarmentOccasion, GarmentStyle } from "../types";
+
+const BUCKET = "wardrobe-images";
+
+export interface NewWardrobeItem {
+  name: string;
+  category: GarmentCategory;
+  style_branch?: string;
+  subcategory?: string;
+  color?: string;
+  material?: string;
+  pattern?: string;
+  occasion?: GarmentOccasion;
+  style?: GarmentStyle;
+  brand?: string;
+  notes?: string;
+  is_shared?: boolean;
+}
+
+/**
+ * Uploads an image File or Blob to Supabase Storage and returns the public URL.
+ * The bucket must exist and have a public SELECT policy.
+ */
+export async function uploadGarmentImage(file: File | Blob, customName?: string): Promise<string> {
+  const fileName = (file instanceof File ? file.name : customName) ?? "garment.png";
+  const ext = fileName.split(".").pop() ?? "png";
+  const path = `public/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+
+  const { error } = await supabase.storage.from(BUCKET).upload(path, file, {
+    cacheControl: "3600",
+    upsert: false,
+    contentType: file.type || "image/png",
+  });
+
+  if (error) throw new Error(`Storage upload failed: ${error.message}`);
+
+  const { data } = supabase.storage.from(BUCKET).getPublicUrl(path);
+  return data.publicUrl;
+}
+
+/**
+ * Returns the authenticated user's ID.
+ * Throws if no user session is found (should never happen inside RequireAuth).
+ */
+export async function getUserId(): Promise<string> {
+  const { data } = await supabase.auth.getUser();
+  if (data?.user?.id) return data.user.id;
+  throw new Error("Not authenticated. Please sign in.");
+}
+
+/**
+ * Inserts a new item into wardrobe_items and returns the created row.
+ */
+export async function createWardrobeItem(
+  item: NewWardrobeItem,
+  imageUrl?: string
+): Promise<WardrobeItem> {
+  const userId = await getUserId();
+  const payload = {
+    user_id: userId,
+    name: item.name,
+    category: item.category,
+    style_branch: item.style_branch ?? null,
+    subcategory: item.subcategory ?? null,
+    color: item.color ?? null,
+    material: item.material ?? null,
+    pattern: item.pattern ?? null,
+    occasion: item.occasion ?? null,
+    style: item.style ?? null,
+    brand: item.brand ?? null,
+    notes: item.notes ?? null,
+    image_url: imageUrl ?? null,
+    is_favorite: false,
+    is_shared: item.is_shared ?? false,
+  };
+
+  const { data, error } = await supabase
+    .from("wardrobe_items")
+    .insert(payload)
+    .select("*")
+    .single();
+
+  if (error) throw new Error(`Database insert failed: ${error.message}`);
+  return data as WardrobeItem;
+}
+
+/**
+ * Updates an existing wardrobe item's metadata and returns the updated row.
+ */
+export async function updateWardrobeItem(
+  id: string,
+  updates: Partial<NewWardrobeItem>
+): Promise<WardrobeItem> {
+  const userId = await getUserId();
+  const payload: Record<string, unknown> = {};
+
+  if (updates.name !== undefined) payload.name = updates.name;
+  if (updates.category !== undefined) payload.category = updates.category;
+  if (updates.style_branch !== undefined) payload.style_branch = updates.style_branch;
+  if (updates.subcategory !== undefined) payload.subcategory = updates.subcategory;
+  if (updates.color !== undefined) payload.color = updates.color;
+  if (updates.material !== undefined) payload.material = updates.material;
+  if (updates.pattern !== undefined) payload.pattern = updates.pattern;
+  if (updates.occasion !== undefined) payload.occasion = updates.occasion;
+  if (updates.style !== undefined) payload.style = updates.style;
+  if (updates.brand !== undefined) payload.brand = updates.brand;
+  if (updates.notes !== undefined) payload.notes = updates.notes;
+  if (updates.is_shared !== undefined) payload.is_shared = updates.is_shared;
+
+  const { data, error } = await supabase
+    .from("wardrobe_items")
+    .update(payload)
+    .eq("id", id)
+    .eq("user_id", userId)
+    .select("*")
+    .single();
+
+  if (error) throw new Error(`Database update failed: ${error.message}`);
+  return data as WardrobeItem;
+}
+
+/**
+ * Deletes a wardrobe item by ID, and deletes its associated image from Supabase Storage.
+ */
+export async function deleteWardrobeItem(id: string, imageUrl?: string): Promise<void> {
+  const userId = await getUserId();
+
+  let targetImageUrl = imageUrl;
+  if (!targetImageUrl) {
+    try {
+      const { data } = await supabase
+        .from("wardrobe_items")
+        .select("image_url")
+        .eq("id", id)
+        .eq("user_id", userId)
+        .single();
+      if (data?.image_url) {
+        targetImageUrl = data.image_url;
+      }
+    } catch {
+      // non-fatal, proceed with delete
+    }
+  }
+
+  // Attempt storage file deletion if the image is in our bucket
+  if (targetImageUrl && targetImageUrl.includes(BUCKET)) {
+    try {
+      const bucketIdx = targetImageUrl.indexOf(BUCKET);
+      if (bucketIdx !== -1) {
+        const fullPath = targetImageUrl.substring(bucketIdx + BUCKET.length + 1).split("?")[0];
+        if (fullPath) {
+          await supabase.storage.from(BUCKET).remove([fullPath]);
+        }
+      }
+    } catch (storageErr) {
+      console.warn("Storage image deletion warning (non-fatal):", storageErr);
+    }
+  }
+
+  const { error } = await supabase
+    .from("wardrobe_items")
+    .delete()
+    .eq("id", id)
+    .eq("user_id", userId);
+
+  if (error) throw new Error(`Database delete failed: ${error.message}`);
+}
+
+/**
+ * Fetches the current user's wardrobe items, newest first.
+ */
+export async function fetchAllWardrobeItems(): Promise<WardrobeItem[]> {
+  const { data: userData } = await supabase.auth.getUser();
+  const userId = userData?.user?.id;
+
+  let query = supabase
+    .from("wardrobe_items")
+    .select("*")
+    .order("created_at", { ascending: false });
+
+  // Filter by user if authenticated (RLS also enforces this)
+  if (userId) {
+    query = query.eq("user_id", userId);
+  }
+
+  const { data, error } = await query;
+  if (error) throw new Error(`Failed to fetch wardrobe items: ${error.message}`);
+  return (data as WardrobeItem[]) ?? [];
+}
