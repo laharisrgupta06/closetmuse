@@ -32,11 +32,32 @@ export async function requestBorrow(roomId: string, itemId: string, message: str
   return data;
 }
 
-export async function respondToBorrow(requestId: string, accept: boolean): Promise<BorrowRequest> {
+/**
+ * Accepts or declines a request, optionally with a reply. The status and the
+ * reply are saved together by one database function call.
+ */
+export async function respondToBorrow(
+  requestId: string,
+  accept: boolean,
+  reply?: string
+): Promise<BorrowRequest> {
+  const text = reply?.trim() ?? "";
+  if (text.length > 500) throw new Error("Replies can be up to 500 characters.");
+  const args = text
+    ? { p_request: requestId, p_accept: accept, p_response: text }
+    : { p_request: requestId, p_accept: accept };
   const { data, error } = await supabase
-    .rpc("respond_borrow_request", { p_request: requestId, p_accept: accept })
+    .rpc("respond_borrow_request", args)
     .single<BorrowRequest>();
-  if (error) throw borrowError(error, "Could not update the request.");
+  if (error) {
+    // Before migration 007 the function has no reply argument
+    if (text && error.code === "PGRST202") {
+      throw new Error(
+        "Replies can't be saved yet: the database update (migration 007) hasn't been applied. You can still answer without a message."
+      );
+    }
+    throw borrowError(error, "Could not update the request.");
+  }
   return data;
 }
 

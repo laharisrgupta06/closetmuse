@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { Repeat2, RefreshCw, Loader2, AlertCircle } from "lucide-react";
+import { Repeat2, RefreshCw, Loader2, AlertCircle, Check } from "lucide-react";
 import EmptyState from "../EmptyState";
 import MemberAvatar from "../MemberAvatar";
+import RespondModal from "./RespondModal";
 import { cancelBorrow, fetchRoomBorrowRequests, respondToBorrow, type BorrowRequestView } from "../../services/borrowService";
 import type { Room, RoomMemberProfile } from "../../types";
 
@@ -17,6 +18,8 @@ export default function BorrowRequests({ room, members }: { room: Room; members:
   const [tab, setTab] = useState<"incoming" | "outgoing">("incoming");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [responding, setResponding] = useState<{ request: BorrowRequestView; accept: boolean } | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const byId = new Map(members.map((m) => [m.user_id, m]));
 
@@ -32,6 +35,21 @@ export default function BorrowRequests({ room, members }: { room: Room; members:
     }
   }, [room.id]);
 
+  // Refresh after an action without blanking the list
+  const refresh = useCallback(async () => {
+    try {
+      setRequests(await fetchRoomBorrowRequests(room.id));
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : "Failed to refresh borrow requests.");
+    }
+  }, [room.id]);
+
+  const openRespond = (request: BorrowRequestView, accept: boolean) => {
+    setNotice(null);
+    setActionError(null);
+    setResponding({ request, accept });
+  };
+
   useEffect(() => {
     let active = true;
     fetchRoomBorrowRequests(room.id)
@@ -46,9 +64,10 @@ export default function BorrowRequests({ room, members }: { room: Room; members:
   const act = async (id: string, task: () => Promise<unknown>) => {
     setBusyId(id);
     setActionError(null);
+    setNotice(null);
     try {
       await task();
-      await load();
+      await refresh();
     } catch (e) {
       setActionError(e instanceof Error ? e.message : "Could not update the request.");
     } finally {
@@ -73,6 +92,7 @@ export default function BorrowRequests({ room, members }: { room: Room; members:
       </div>
 
       {actionError && <div className="item-detail-error" role="alert" style={{ marginBottom: 12 }}><AlertCircle size={13} /> {actionError}</div>}
+      {notice && <div className="item-detail-notice" role="status" style={{ marginBottom: 12 }} id="borrow-notice"><Check size={13} /> {notice}</div>}
 
       {loading ? (
         <div className="room-chat-placeholder"><Loader2 size={16} className="spin" /> Loading requests…</div>
@@ -110,19 +130,30 @@ export default function BorrowRequests({ room, members }: { room: Room; members:
                     {tab === "incoming" ? `${otherName} asked to borrow` : `Owned by ${otherName}`}
                     <span className="borrow-date">· {formatDate(r.created_at)}</span>
                   </div>
-                  {r.message && <p className="borrow-message">“{r.message}”</p>}
+                  {r.message && (
+                    <p className="borrow-message">
+                      <span className="borrow-message-label">{tab === "incoming" ? `Note from ${otherName}` : "Your note"}</span>
+                      “{r.message}”
+                    </p>
+                  )}
                   {r.responded_at && r.status !== "pending" && (
                     <div className="borrow-date">{STATUS_LABEL[r.status]} on {formatDate(r.responded_at)}</div>
+                  )}
+                  {r.response_message && (
+                    <p className="borrow-message borrow-reply">
+                      <span className="borrow-message-label">{tab === "incoming" ? "Your reply" : `${otherName}'s reply`}</span>
+                      “{r.response_message}”
+                    </p>
                   )}
                 </div>
                 <div className="borrow-side">
                   <span className={`borrow-status borrow-status--${r.status}`}>{STATUS_LABEL[r.status]}</span>
                   {r.status === "pending" && tab === "incoming" && (
                     <div className="borrow-actions">
-                      <button className="btn btn-primary btn-sm" disabled={busyId !== null} onClick={() => act(r.id, () => respondToBorrow(r.id, true))}>
-                        {busyId === r.id ? <Loader2 size={13} className="spin" /> : "Accept"}
+                      <button className="btn btn-primary btn-sm" disabled={busyId !== null} onClick={() => openRespond(r, true)}>
+                        Accept
                       </button>
-                      <button className="btn btn-secondary btn-sm" disabled={busyId !== null} onClick={() => act(r.id, () => respondToBorrow(r.id, false))}>
+                      <button className="btn btn-secondary btn-sm" disabled={busyId !== null} onClick={() => openRespond(r, false)}>
                         Decline
                       </button>
                     </div>
@@ -137,6 +168,21 @@ export default function BorrowRequests({ room, members }: { room: Room; members:
             );
           })}
         </ul>
+      )}
+
+      {responding && (
+        <RespondModal
+          accept={responding.accept}
+          itemName={responding.request.item?.name ?? "this item"}
+          requesterName={byId.get(responding.request.requester_id)?.display_name ?? "The requester"}
+          onCancel={() => setResponding(null)}
+          onConfirm={async (reply) => {
+            await respondToBorrow(responding.request.id, responding.accept, reply);
+            setResponding(null);
+            setNotice(responding.accept ? "Request accepted." : "Request declined.");
+            await refresh();
+          }}
+        />
       )}
     </div>
   );

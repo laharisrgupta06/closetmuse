@@ -125,7 +125,10 @@ export interface BorrowRequest {
   owner_id: string;
   requester_id: string;
   status: BorrowStatus;
+  /** The requester's note */
   message: string | null;
+  /** The owner's optional reply when accepting or declining (migration 007) */
+  response_message?: string | null;
   created_at: string;
   responded_at: string | null;
   updated_at: string;
