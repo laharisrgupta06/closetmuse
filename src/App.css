@@ -204,7 +204,7 @@
 
 .page-title {
   font-family: var(--font-serif);
-  font-size: clamp(32px, 4vw, 52px);
+  font-size: clamp(30px, 3.4vw, 44px);
   font-weight: 500;
   letter-spacing: -1px;
   line-height: 1.05;
@@ -544,6 +544,12 @@
   color: var(--espresso);
 }
 
+.tab-item svg {
+  display: inline-block;
+  vertical-align: -2px;
+  margin-right: 6px;
+}
+
 .tab-item.active {
   color: var(--espresso);
   font-weight: 600;
@@ -563,6 +569,14 @@
   letter-spacing: 0.8px;
   text-transform: uppercase;
   color: var(--brown-soft);
+}
+
+/* Fields fill their column and may shrink inside grids and flex rows */
+.form-input,
+.form-select,
+.form-textarea {
+  width: 100%;
+  min-width: 0;
 }
 
 .form-input {
@@ -1838,6 +1852,7 @@
 }
 
 .room-chat-composer .btn {
+  flex-shrink: 0;
   height: 44px;
   width: 48px;
   padding: 0;
@@ -2298,4 +2313,452 @@
 .borrow-reply {
   padding-left: 10px;
   border-left: 2px solid var(--gold-light, var(--border));
+}
+
+/* ─── Item type / tradition suggestions ──────────────────────── */
+.suggest {
+  position: relative;
+}
+
+.suggest-input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.suggest-list {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-md);
+}
+
+.suggest-group {
+  padding: 8px 14px 4px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--brown-muted);
+}
+
+.suggest-option {
+  padding: 7px 14px;
+  font-size: 13.5px;
+  color: var(--espresso);
+  cursor: pointer;
+}
+
+.suggest-option.active {
+  background: var(--cream-dark);
+}
+
+.suggest-option.custom {
+  font-style: italic;
+  color: var(--brown-soft);
+  border-bottom: 1px solid var(--border-light);
+}
+
+.field-hint {
+  margin: 5px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--brown-muted);
+}
+
+/* ─── Style / type / tradition filters ───────────────────────── */
+/* Secondary filters sit under the main category chips, in their own panel */
+.refine-filters {
+  margin: -16px 0 24px;
+}
+
+.refine-toggle {
+  font-size: 12.5px;
+  gap: 6px;
+}
+
+.refine-toggle.active {
+  color: var(--espresso);
+}
+
+.refine-toggle + .refine-panel {
+  margin-top: 8px;
+}
+
+.refine-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px 14px;
+  border: 1px solid var(--border-light);
+  border-left: 2px solid var(--gold-light);
+  border-radius: var(--r-md);
+  background: rgba(255, 255, 255, 0.65);
+}
+
+.refine-title {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--brown-muted);
+}
+
+.refine-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.refine-label {
+  flex: 0 0 72px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--brown-soft);
+}
+
+.refine-row .filter-chips {
+  flex: 1;
+  min-width: 0;
+}
+
+.refine-row-end {
+  padding-left: 84px;
+}
+
+.filter-chip-sm {
+  height: 30px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
+.chip-count {
+  margin-left: 6px;
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+.refine-select {
+  height: 32px;
+  width: auto;
+  max-width: 100%;
+  font-size: 12.5px;
+  border-radius: var(--r-full);
+  padding-left: 12px;
+}
+
+.refine-clear {
+  font-size: 12px;
+}
+
+.builder-refine .refine-filters {
+  margin: -8px 0 16px;
+}
+
+/* ─── Edit item dialog layout ────────────────────────────────── */
+.edit-item-top {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: 20px;
+  margin-bottom: 20px;
+}
+
+.edit-item-preview {
+  width: 140px;
+  height: 180px;
+}
+
+.edit-item-attrs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+@media (max-width: 560px) {
+  .edit-item-top {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+
+  .edit-item-preview {
+    width: 100%;
+    height: 160px;
+  }
+
+  .edit-item-attrs {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ─── Inline page messages ───────────────────────────────────── */
+.page-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px 10px 14px;
+  margin-bottom: 18px;
+  border: 1px solid var(--rose-light);
+  border-radius: var(--r-md);
+  background: var(--rose-pale);
+  color: var(--espresso);
+  font-size: 13px;
+}
+
+.page-error > svg {
+  flex-shrink: 0;
+  color: var(--rose);
+}
+
+.page-error > span {
+  flex: 1;
+}
+
+.page-error .icon-btn {
+  width: 28px;
+  height: 28px;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.stylist-source {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 20px;
+  font-size: 12.5px;
+  color: var(--brown-soft);
+}
+
+.stylist-source svg {
+  flex-shrink: 0;
+  color: var(--gold);
+}
+
+/* ─── Filter bar refinements ─────────────────────────────────── */
+/* Sort sits beside the pill-shaped search and chips */
+.filter-bar .sort-select {
+  height: 38px;
+  border-radius: var(--r-full);
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+/* An aesthetic with no items stays clickable but recedes */
+.filter-chip.is-empty:not(.active) {
+  color: var(--brown-muted);
+  border-style: dashed;
+}
+
+@media (max-width: 768px) {
+  /* The bar is a single column here; wrapping would size each line to the
+     widest child and let the chip row push the page sideways */
+  .filter-bar {
+    flex-wrap: nowrap;
+  }
+
+  .filter-bar .filter-chips {
+    max-width: 100%;
+  }
+
+  /* One scrollable line of chips instead of several wrapped rows */
+  .filter-bar .filter-chips,
+  .refine-filters .filter-chips {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    padding: 2px 24px 2px 2px;
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  }
+
+  .filter-bar .filter-chips::-webkit-scrollbar,
+  .refine-filters .filter-chips::-webkit-scrollbar {
+    display: none;
+  }
+
+  .filter-bar .filter-chips .filter-chip,
+  .refine-filters .filter-chips .filter-chip {
+    flex-shrink: 0;
+  }
+
+  .refine-filters .filter-chips {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .filter-bar .sort-select {
+    width: 100%;
+  }
+}
+
+@media (max-width: 480px) {
+  /* Three tabs plus a count must fit a 360–390px screen */
+  .tab-bar {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .tab-bar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .tab-item {
+    padding: 10px 12px;
+  }
+}
+
+/* ─── Decorative gold hangers (Closet only) ──────────────────── */
+/* Original illustration in src/assets/hangers-gold.svg: five hangers on a
+   rail, each at a different gentle tilt. Purely decorative: behind the
+   content, never interactive, kept away from the page title. */
+.closet-page {
+  position: relative;
+  isolation: isolate;
+}
+
+.closet-empty-decor {
+  position: relative;
+  isolation: isolate;
+}
+
+.closet-empty-decor::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: 6px;
+  left: 50%;
+  width: min(360px, 80%);
+  aspect-ratio: 888 / 150;
+  transform: translateX(-50%);
+  background: url("./assets/hangers-gold.svg") no-repeat center / contain;
+  opacity: 0.22;
+  pointer-events: none;
+}
+
+
+@media (max-width: 768px) {
+  .refine-panel {
+    padding: 10px 12px 12px;
+  }
+
+  .refine-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+
+  .refine-label {
+    flex: none;
+  }
+
+  .refine-row-end {
+    flex-direction: row;
+    align-items: center;
+    padding-left: 0;
+  }
+}
+
+/* ─── My Closet: wardrobe backdrop (ClosetBackdrop.tsx) ──────── */
+/* Faint and behind everything; laid out so the alcove sits in the open band
+   between the title and the buttons, and the shelf sits above the buttons. */
+.closet-backdrop {
+  position: absolute;
+  z-index: -1;
+  inset: 0 0 auto 0;
+  height: 150px;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.closet-backdrop-wash {
+  position: absolute;
+  inset: 0;
+  /* A soft light that fades out on every side: no visible box edges */
+  background: radial-gradient(ellipse 50% 85% at 62% 0%, rgba(239, 229, 211, 0.6), rgba(239, 229, 211, 0) 72%);
+}
+
+.closet-backdrop-alcove {
+  position: absolute;
+  top: 8px;
+  right: 290px;
+  width: clamp(0px, calc(100% - 740px), 560px);
+  height: auto;
+  aspect-ratio: 950 / 150;
+  opacity: 0.42;
+  /* Lines and garments dissolve towards the bottom instead of stopping */
+  -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent);
+  mask-image: linear-gradient(to bottom, #000 55%, transparent);
+}
+
+.closet-backdrop-shelf {
+  position: absolute;
+  top: 4px;
+  right: 40px;
+  width: 200px;
+  height: auto;
+  aspect-ratio: 230 / 64;
+  opacity: 0.6;
+}
+
+/* Each hanger sways a few degrees about its hook, on its own timing */
+.closet-hanger {
+  transform-box: fill-box;
+  transform-origin: 50% 0;
+  animation-name: hanger-sway;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+  animation-direction: alternate;
+  animation-fill-mode: both;
+}
+
+@keyframes hanger-sway {
+  from {
+    transform: rotate(calc(var(--amp) * -1));
+  }
+  to {
+    transform: rotate(var(--amp));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .closet-hanger {
+    animation: none;
+  }
+}
+
+@media (max-width: 1100px) {
+  .closet-backdrop-shelf {
+    display: none;
+  }
+
+  .closet-backdrop-alcove {
+    right: 270px;
+    width: clamp(0px, calc(100% - 560px), 560px);
+  }
+}
+
+@media (max-width: 768px) {
+  .closet-backdrop {
+    height: 112px;
+  }
+
+  /* The header stacks on phones: the top-right corner beside the title is free */
+  .closet-backdrop-alcove {
+    top: 6px;
+    right: 12px;
+    width: 54%;
+    opacity: 0.38;
+  }
 }

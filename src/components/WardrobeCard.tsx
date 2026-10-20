@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 import { Heart, Plus, Edit2, Trash2 } from "lucide-react";
 import type { WardrobeItem } from "../types";
-import { getNormalizedCategory } from "../utils/category";
+import { CATEGORY_DEFINITIONS, getNormalizedCategory } from "../utils/category";
+import { normalizeAesthetic } from "../utils/taxonomy";
 
 interface WardrobeCardProps {
   item: WardrobeItem;
@@ -146,8 +147,10 @@ export default function WardrobeCard({
       <div className="wardrobe-card-info">
         <div className="wardrobe-card-name">{item.name}</div>
         <div className="wardrobe-card-meta">
-          {item.style_branch ? `${item.style_branch} • ` : ""}
-          {item.subcategory || getNormalizedCategory(item)}
+          {/* Aesthetic only when set ("Unknown" is not shown), then type or category */}
+          {normalizeAesthetic(item.style_branch) ? `${normalizeAesthetic(item.style_branch)} • ` : ""}
+          {item.subcategory ||
+            CATEGORY_DEFINITIONS.find((c) => c.value === getNormalizedCategory(item))?.label}
           {item.color ? ` • ${item.color}` : ""}
         </div>
         {footer}

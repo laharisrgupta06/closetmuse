@@ -5,6 +5,7 @@
  */
 import { supabase } from "../lib/supabase";
 import type { WardrobeItem, GarmentCategory, GarmentOccasion, GarmentStyle } from "../types";
+import { missingOptionalColumn } from "../utils/itemEdits";
 
 const BUCKET = "wardrobe-images";
 
@@ -20,7 +21,52 @@ export interface NewWardrobeItem {
   style?: GarmentStyle;
   brand?: string;
   notes?: string;
+  /** Needs migration 008; check hasDesignTraditionColumn() before offering it */
+  design_tradition?: string;
   is_shared?: boolean;
+}
+
+/** Fields of an update; null clears a stored value */
+export type WardrobeItemUpdate = { [K in keyof NewWardrobeItem]?: NewWardrobeItem[K] | null };
+
+/**
+ * Runs an insert or update, dropping an optional column the database doesn't
+ * have yet (before migrations 006/008) and retrying. Required columns are
+ * never dropped.
+ */
+async function withOptionalColumns<T>(
+  row: Record<string, unknown>,
+  run: (row: Record<string, unknown>) => PromiseLike<{ data: T | null; error: { code?: string; message: string } | null }>
+): Promise<{ data: T | null; error: { code?: string; message: string } | null }> {
+  let current = { ...row };
+  for (;;) {
+    const result = await run(current);
+    const missing = missingOptionalColumn(result.error);
+    if (!missing || !(missing in current)) return result;
+    if (current[missing] !== null && current[missing] !== undefined) {
+      console.warn(`"${missing}" was not saved: the database column does not exist yet.`);
+    }
+    const { [missing]: _dropped, ...rest } = current;
+    void _dropped;
+    current = rest;
+  }
+}
+
+let traditionColumn: Promise<boolean> | null = null;
+
+/**
+ * Whether wardrobe_items.design_tradition exists (migration 008). Checked
+ * once per session with a read that returns no rows.
+ */
+export function hasDesignTraditionColumn(): Promise<boolean> {
+  traditionColumn ??= (async () => {
+    const { error } = await supabase.from("wardrobe_items").select("design_tradition").limit(0);
+    if (!error) return true;
+    if (missingOptionalColumn(error) === "design_tradition") return false;
+    traditionColumn = null; // network or auth problem: try again next time
+    return false;
+  })();
+  return traditionColumn;
 }
 
 /**
@@ -82,52 +128,43 @@ export async function createWardrobeItem(
     is_favorite: false,
     is_shared: item.is_shared ?? false,
   };
+  // Optional columns are only sent with a value, so saves work before 006/008
+  const row: Record<string, unknown> = { ...payload };
+  if (originalImageUrl) row.original_image_url = originalImageUrl;
+  if (item.design_tradition?.trim()) row.design_tradition = item.design_tradition.trim();
 
-  const insert = (row: Record<string, unknown>) =>
-    supabase.from("wardrobe_items").insert(row).select("*").single();
-
-  let { data, error } = await insert(
-    originalImageUrl ? { ...payload, original_image_url: originalImageUrl } : payload
+  const { data, error } = await withOptionalColumns<WardrobeItem>(row, (r) =>
+    supabase.from("wardrobe_items").insert(r).select("*").single()
   );
-  // Before migration 006 the original_image_url column doesn't exist yet
-  if (error && originalImageUrl && (error.code === "PGRST204" || error.code === "42703")) {
-    ({ data, error } = await insert(payload));
-  }
 
   if (error) throw new Error(`Database insert failed: ${error.message}`);
   return data as WardrobeItem;
 }
 
+const UPDATABLE_FIELDS = [
+  "name", "category", "style_branch", "subcategory", "color", "material", "pattern",
+  "occasion", "style", "brand", "notes", "design_tradition", "is_shared",
+] as const;
+
 /**
- * Updates an existing wardrobe item's metadata and returns the updated row.
+ * Updates only the given fields (null clears one) and returns the updated row.
  */
 export async function updateWardrobeItem(
   id: string,
-  updates: Partial<NewWardrobeItem>
+  updates: WardrobeItemUpdate
 ): Promise<WardrobeItem> {
   const userId = await getUserId();
   const payload: Record<string, unknown> = {};
+  for (const field of UPDATABLE_FIELDS) {
+    if (updates[field] !== undefined) payload[field] = updates[field];
+  }
 
-  if (updates.name !== undefined) payload.name = updates.name;
-  if (updates.category !== undefined) payload.category = updates.category;
-  if (updates.style_branch !== undefined) payload.style_branch = updates.style_branch;
-  if (updates.subcategory !== undefined) payload.subcategory = updates.subcategory;
-  if (updates.color !== undefined) payload.color = updates.color;
-  if (updates.material !== undefined) payload.material = updates.material;
-  if (updates.pattern !== undefined) payload.pattern = updates.pattern;
-  if (updates.occasion !== undefined) payload.occasion = updates.occasion;
-  if (updates.style !== undefined) payload.style = updates.style;
-  if (updates.brand !== undefined) payload.brand = updates.brand;
-  if (updates.notes !== undefined) payload.notes = updates.notes;
-  if (updates.is_shared !== undefined) payload.is_shared = updates.is_shared;
-
-  const { data, error } = await supabase
-    .from("wardrobe_items")
-    .update(payload)
-    .eq("id", id)
-    .eq("user_id", userId)
-    .select("*")
-    .single();
+  const { data, error } = await withOptionalColumns<WardrobeItem>(payload, (row) =>
+    Object.keys(row).length === 0
+      ? // Nothing left to change: return the row as stored
+        supabase.from("wardrobe_items").select("*").eq("id", id).eq("user_id", userId).single()
+      : supabase.from("wardrobe_items").update(row).eq("id", id).eq("user_id", userId).select("*").single()
+  );
 
   if (error) throw new Error(`Database update failed: ${error.message}`);
   return data as WardrobeItem;

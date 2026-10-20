@@ -30,6 +30,11 @@ import type { GarmentCategory, GarmentOccasion, GarmentStyle } from "../types";
 import { analyseGarmentImage, encodeImageForAnalysis } from "../services/geminiService";
 import type { GarmentAnalysis } from "../services/geminiService";
 import { uploadGarmentImage, createWardrobeItem } from "../services/wardrobeService";
+import AestheticPicker from "../components/taxonomy/AestheticPicker";
+import ItemTypeInput from "../components/taxonomy/ItemTypeInput";
+import TraditionInput from "../components/taxonomy/TraditionInput";
+import { useTraditionColumn } from "../components/taxonomy/useTraditionColumn";
+import { normalizeAesthetic } from "../utils/taxonomy";
 import { isolateGarment } from "../services/imageIsolationService";
 import { prepareOriginalForStorage } from "../utils/imageFiles";
 import { getNormalizedCategory } from "../utils/category";
@@ -93,13 +98,12 @@ const COLORS = [
   { label: "Multi", hex: "linear-gradient(135deg, #e74c3c, #3498db, #2ecc71)" },
 ];
 
-const STYLE_BRANCHES = ["Traditional", "Indo-Western", "Western", "Unknown"];
-
 interface GarmentForm {
   name: string;
   category: GarmentCategory | "";
   style_branch: string;
   subcategory: string;
+  design_tradition: string;
   color: string;
   material: string;
   pattern: string;
@@ -115,6 +119,7 @@ const EMPTY_FORM: GarmentForm = {
   category: "",
   style_branch: "",
   subcategory: "",
+  design_tradition: "",
   color: "",
   material: "",
   pattern: "",
@@ -185,6 +190,7 @@ function mapAnalysisToForm(a: GarmentAnalysis): Partial<GarmentForm> {
     category,
     style_branch: a.style_branch || "",
     subcategory: a.subcategory || "",
+    design_tradition: a.design_tradition || "",
     color: a.color || "",
     material: a.material || "",
     pattern: a.pattern || "",
@@ -198,6 +204,7 @@ function mapAnalysisToForm(a: GarmentAnalysis): Partial<GarmentForm> {
 /* ══════════════════════════════════════════════════════════════ */
 function SingleItemMode() {
   const navigate = useNavigate();
+  const traditionAvailable = useTraditionColumn();
   const [isDragging, setIsDragging] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [rawPreviewUrl, setRawPreviewUrl] = useState<string | null>(null);
@@ -320,6 +327,7 @@ function SingleItemMode() {
           category: form.category as GarmentCategory,
           style_branch: form.style_branch || undefined,
           subcategory: form.subcategory || undefined,
+          design_tradition: traditionAvailable ? form.design_tradition || undefined : undefined,
           color: form.color || undefined,
           material: form.material || undefined,
           pattern: form.pattern || undefined,
@@ -618,36 +626,6 @@ function SingleItemMode() {
           </div>
         </div>
 
-        {/* Style Branch */}
-        <div className="form-group">
-          <label className="form-label">Style Branch</label>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {STYLE_BRANCHES.map((b) => (
-              <button
-                key={b}
-                type="button"
-                className={`filter-chip${form.style_branch === b ? " active" : ""}`}
-                onClick={() => setForm((prev) => ({ ...prev, style_branch: prev.style_branch === b ? "" : b }))}
-              >
-                {b}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Subcategory */}
-        <div className="form-group">
-          <label className="form-label" htmlFor="subcategory">Type / Subcategory</label>
-          <input
-            id="subcategory"
-            name="subcategory"
-            className="form-input"
-            placeholder="e.g. Saree, Kurti, Jeans, Sneakers"
-            value={form.subcategory}
-            onChange={handleInputChange}
-          />
-        </div>
-
         {/* Category */}
         <div className="form-group">
           <label className="form-label" htmlFor="category">
@@ -672,6 +650,41 @@ function SingleItemMode() {
             />
           </div>
         </div>
+        {/* Item type */}
+        <div className="form-group">
+          <label className="form-label" htmlFor="subcategory">Item Type</label>
+          <ItemTypeInput
+            id="subcategory"
+            category={form.category}
+            value={form.subcategory}
+            onChange={(v) => setForm((prev) => ({ ...prev, subcategory: v }))}
+            onPickCategory={(c) => setForm((prev) => (prev.category ? prev : { ...prev, category: c }))}
+            aesthetic={normalizeAesthetic(form.style_branch)}
+          />
+        </div>
+
+        {/* Aesthetic */}
+        <div className="form-group">
+          <span className="form-label" id="build-aesthetic-label">Aesthetic</span>
+          <AestheticPicker
+            value={form.style_branch}
+            onChange={(v) => setForm((prev) => ({ ...prev, style_branch: v }))}
+            labelId="build-aesthetic-label"
+          />
+        </div>
+
+        {(form.category === "jewellery" || form.design_tradition) && (
+          <div className="form-group">
+            <label className="form-label" htmlFor="design_tradition">Design Tradition</label>
+            <TraditionInput
+              id="design_tradition"
+              value={form.design_tradition}
+              onChange={(v) => setForm((prev) => ({ ...prev, design_tradition: v }))}
+              aesthetic={normalizeAesthetic(form.style_branch)}
+              available={traditionAvailable}
+            />
+          </div>
+        )}
 
         {/* Color */}
         <div className="form-group">
@@ -879,6 +892,7 @@ function SingleItemMode() {
 /* ══════════════════════════════════════════════════════════════ */
 function BatchMode() {
   const navigate = useNavigate();
+  const traditionAvailable = useTraditionColumn();
   const batchInputRef = useRef<HTMLInputElement>(null);
   const [items, setItems] = useState<BatchItem[]>([]);
   const [batchSaveState, setBatchSaveState] = useState<"idle" | "saving" | "done" | "error">("idle");
@@ -1041,6 +1055,7 @@ function BatchMode() {
             category: item.form.category as GarmentCategory,
             style_branch: item.form.style_branch || undefined,
             subcategory: item.form.subcategory || undefined,
+            design_tradition: traditionAvailable ? item.form.design_tradition || undefined : undefined,
             color: item.form.color || undefined,
             material: item.form.material || undefined,
             pattern: item.form.pattern || undefined,
@@ -1386,33 +1401,26 @@ function BatchMode() {
                         />
                       </div>
 
-                      {/* Style Branch */}
+                      {/* Aesthetic */}
                       <div className="form-group" style={{ marginBottom: 0 }}>
-                        <label className="form-label">Style Branch</label>
-                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                          {STYLE_BRANCHES.map((b) => (
-                            <button
-                              key={b}
-                              type="button"
-                              className={`filter-chip${item.form.style_branch === b ? " active" : ""}`}
-                              style={{ fontSize: 11, padding: "4px 10px" }}
-                              onClick={() => updateBatchForm(item.id, "style_branch", item.form.style_branch === b ? "" : b)}
-                            >
-                              {b}
-                            </button>
-                          ))}
-                        </div>
+                        <span className="form-label" id={`aes-${item.id}`}>Aesthetic</span>
+                        <AestheticPicker
+                          value={item.form.style_branch}
+                          onChange={(v) => updateBatchForm(item.id, "style_branch", v)}
+                          labelId={`aes-${item.id}`}
+                        />
                       </div>
 
                       {/* Subcategory */}
                       <div className="form-group" style={{ marginBottom: 0 }}>
-                        <label className="form-label" htmlFor={`sub-${item.id}`}>Type</label>
-                        <input
+                        <label className="form-label" htmlFor={`sub-${item.id}`}>Item Type</label>
+                        <ItemTypeInput
                           id={`sub-${item.id}`}
-                          className="form-input"
+                          category={item.form.category}
                           value={item.form.subcategory}
-                          onChange={(e) => updateBatchForm(item.id, "subcategory", e.target.value)}
-                          placeholder="e.g. Saree, Jeans"
+                          onChange={(v) => updateBatchForm(item.id, "subcategory", v)}
+                          onPickCategory={(c) => !item.form.category && updateBatchForm(item.id, "category", c)}
+                          aesthetic={normalizeAesthetic(item.form.style_branch)}
                         />
                       </div>
 
@@ -1431,6 +1439,19 @@ function BatchMode() {
                           {CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
                         </select>
                       </div>
+
+                      {(item.form.category === "jewellery" || item.form.design_tradition) && (
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label className="form-label" htmlFor={`trad-${item.id}`}>Design Tradition</label>
+                          <TraditionInput
+                            id={`trad-${item.id}`}
+                            value={item.form.design_tradition}
+                            onChange={(v) => updateBatchForm(item.id, "design_tradition", v)}
+                            aesthetic={normalizeAesthetic(item.form.style_branch)}
+                            available={traditionAvailable}
+                          />
+                        </div>
+                      )}
 
                       {/* Color */}
                       <div className="form-group" style={{ marginBottom: 0 }}>
@@ -1557,7 +1578,7 @@ function BatchMode() {
                   {inspectItem.form.name || inspectItem.analysis?.subcategory || "Batch Item Preview"}
                 </h3>
                 <div style={{ fontSize: 12, color: "var(--brown-muted)", marginTop: 2 }}>
-                  {inspectItem.form.category} • {inspectItem.form.style_branch || "Style"}
+                  {inspectItem.form.category} • {inspectItem.form.style_branch || "Aesthetic not set"}
                 </div>
               </div>
               <button

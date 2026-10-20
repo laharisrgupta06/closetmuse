@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 888 150" width="888" height="150" role="img" aria-label="Gold hangers">
+  <!-- Original ClosetMuse decoration: five gold hangers on a rail, each at a different gentle tilt. -->
+  <defs>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f1deaa"/>
+      <stop offset="0.45" stop-color="#c9a35a"/>
+      <stop offset="0.7" stop-color="#a8823d"/>
+      <stop offset="1" stop-color="#e4cb8d"/>
+    </linearGradient>
+  </defs>
+  <line x1="12" y1="48" x2="876" y2="48" stroke="#c9a35a" stroke-width="2.2" stroke-linecap="round"/>
+  <g fill="none" stroke="url(#gold)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+    <g class="hanger" transform="translate(88 46) rotate(-10)">
+      <path d="M0 24 L0 10 C0 0 12 -3 13 5 C13.6 10 8 12 6 9" />
+      <circle cx="0" cy="26" r="2.4" />
+      <path d="M-2 28 L-58 66 Q-65 71 -56 72 L56 72 Q65 71 58 66 L2 28" />
+    </g>
+    <g class="hanger" transform="translate(266 47) rotate(7)">
+      <path d="M0 24 L0 10 C0 0 12 -3 13 5 C13.6 10 8 12 6 9" />
+      <circle cx="0" cy="26" r="2.4" />
+      <path d="M-2 28 L-58 66 Q-65 71 -56 72 L56 72 Q65 71 58 66 L2 28" />
+    </g>
+    <g class="hanger" transform="translate(444 46) rotate(-5)">
+      <path d="M0 24 L0 10 C0 0 12 -3 13 5 C13.6 10 8 12 6 9" />
+      <circle cx="0" cy="26" r="2.4" />
+      <path d="M-2 28 L-58 66 Q-65 71 -56 72 L56 72 Q65 71 58 66 L2 28" />
+    </g>
+    <g class="hanger" transform="translate(622 48) rotate(12)">
+      <path d="M0 24 L0 10 C0 0 12 -3 13 5 C13.6 10 8 12 6 9" />
+      <circle cx="0" cy="26" r="2.4" />
+      <path d="M-2 28 L-58 66 Q-65 71 -56 72 L56 72 Q65 71 58 66 L2 28" />
+    </g>
+    <g class="hanger" transform="translate(800 47) rotate(-8)">
+      <path d="M0 24 L0 10 C0 0 12 -3 13 5 C13.6 10 8 12 6 9" />
+      <circle cx="0" cy="26" r="2.4" />
+      <path d="M-2 28 L-58 66 Q-65 71 -56 72 L56 72 Q65 71 58 66 L2 28" />
+    </g>
+  </g>
+</svg>

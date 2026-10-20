@@ -63,8 +63,8 @@ export default function Stylist() {
   const [prompt, setPrompt] = useState("");
   const [occasion, setOccasion] = useState<GarmentOccasion | "">("");
   const [style, setStyle] = useState<GarmentStyle | "">("");
-  const [wardrobeSource, setWardrobeSource] =
-    useState<WardrobeSource>("my_closet");
+  const wardrobeSource: WardrobeSource = "my_closet";
+  const [actionError, setActionError] = useState<string | null>(null);
   const [requesting, setRequesting] = useState(false);
   const [stylingResult, setStylingResult] = useState<StylingResultData | null>(
     null
@@ -188,7 +188,7 @@ export default function Stylist() {
       setTimeout(() => setSavedSuccess(false), 2500);
     } catch (err) {
       console.error("Failed to save outfit:", err);
-      alert(err instanceof Error ? err.message : "Failed to save outfit.");
+      setActionError(err instanceof Error ? err.message : "Failed to save outfit.");
     } finally {
       setSavingLook(false);
     }
@@ -200,7 +200,7 @@ export default function Stylist() {
       await deleteSavedOutfit(id);
     } catch (err) {
       console.error("Failed to delete outfit:", err);
-      alert(err instanceof Error ? err.message : "Failed to delete outfit.");
+      setActionError(err instanceof Error ? err.message : "Failed to delete outfit.");
       loadSavedOutfits(); // restore the list to what is actually stored
     }
   };
@@ -218,32 +218,46 @@ export default function Stylist() {
               <h1 className="page-title">AI Stylist</h1>
             </div>
 
-            <div style={{ display: "flex", gap: 8 }}>
-              <button
-                type="button"
-                className={`btn btn-sm ${
-                  activeTab === "stylist" ? "btn-primary" : "btn-secondary"
-                }`}
-                onClick={() => setActiveTab("stylist")}
-              >
-                <Wand2 size={13} />
-                Generate Outfit
-              </button>
-              <button
-                type="button"
-                className={`btn btn-sm ${
-                  activeTab === "saved" ? "btn-primary" : "btn-secondary"
-                }`}
-                onClick={() => {
-                  setActiveTab("saved");
-                  loadSavedOutfits();
-                }}
-              >
-                <BookmarkCheck size={13} />
-                Saved Outfits {savedOutfits.length > 0 && `(${savedOutfits.length})`}
+          </div>
+
+          {/* Two views of the same page: tabs, like the Closet */}
+          <div className="tab-bar" role="tablist" aria-label="AI Stylist views">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "stylist"}
+              className={`tab-item${activeTab === "stylist" ? " active" : ""}`}
+              onClick={() => setActiveTab("stylist")}
+              id="stylist-tab-style"
+            >
+              <Wand2 size={13} />
+              Style me
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "saved"}
+              className={`tab-item${activeTab === "saved" ? " active" : ""}`}
+              onClick={() => {
+                setActiveTab("saved");
+                loadSavedOutfits();
+              }}
+              id="stylist-tab-saved"
+            >
+              <BookmarkCheck size={13} />
+              Saved Outfits {savedOutfits.length > 0 && `(${savedOutfits.length})`}
+            </button>
+          </div>
+
+          {actionError && (
+            <div className="page-error" role="alert">
+              <AlertCircle size={15} aria-hidden="true" />
+              <span>{actionError}</span>
+              <button type="button" className="icon-btn" onClick={() => setActionError(null)} aria-label="Dismiss message">
+                ×
               </button>
             </div>
-          </div>
+          )}
 
           {activeTab === "saved" ? (
             /* ══════════════════════════════════════════════════════════════ */
@@ -492,34 +506,11 @@ export default function Stylist() {
 
                 <div className="divider" />
 
-                {/* Wardrobe Source */}
-                <div style={{ marginBottom: 24 }}>
-                  <div className="eyebrow" style={{ marginBottom: 12 }}>
-                    Style From
-                  </div>
-                  <div
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 8,
-                    }}
-                  >
-                    <button
-                      type="button"
-                      className={`select-option${wardrobeSource === "my_closet" ? " selected" : ""}`}
-                      style={{
-                        height: "auto",
-                        padding: "12px 16px",
-                        textAlign: "left",
-                        justifyContent: "flex-start",
-                      }}
-                      onClick={() => setWardrobeSource("my_closet")}
-                    >
-                      <Shirt size={15} style={{ flexShrink: 0 }} />
-                      My Closet
-                    </button>
-                  </div>
-                </div>
+                {/* Wardrobe source: only the user's own closet is supported */}
+                <p className="stylist-source">
+                  <Shirt size={14} aria-hidden="true" />
+                  Looks are built only from items in your closet.
+                </p>
 
                 <button
                   type="button"

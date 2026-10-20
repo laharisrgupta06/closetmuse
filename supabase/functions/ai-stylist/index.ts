@@ -68,10 +68,12 @@ Deno.serve(async (req: Request) => {
     const body: StylistRequestBody = await req.json();
     const { prompt = "", occasion = "", style_preference = "" } = body;
 
-    // Load only the authenticated user's wardrobe (RLS + explicit filter)
+    // Load only the authenticated user's wardrobe (RLS + explicit filter).
+    // "*" works before and after migration 008 (design_tradition); the
+    // catalogue sent to Gemini picks only the styling fields.
     const { data: wardrobeRows, error: wardrobeError } = await supabase
       .from("wardrobe_items")
-      .select("id, name, category, subcategory, style_branch, color, material, pattern, occasion, style, notes")
+      .select("*")
       .eq("user_id", user.id);
 
     if (wardrobeError) {

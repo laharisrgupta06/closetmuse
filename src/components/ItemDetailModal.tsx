@@ -146,7 +146,8 @@ export default function ItemDetailModal({
   const details: [string, string | null | undefined][] = [
     ["Category", categoryLabel],
     ["Type", item.subcategory],
-    ["Style branch", item.style_branch],
+    ["Aesthetic", item.style_branch],
+    ["Design tradition", item.design_tradition],
     ["Colour", item.color],
     ["Material", item.material],
     ["Pattern / craft", item.pattern],

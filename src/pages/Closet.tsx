@@ -1,8 +1,7 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Search,
-  SlidersHorizontal,
   Heart,
   Shirt,
   Wand2,
@@ -30,7 +29,11 @@ import {
 import EditItemModal from "../components/EditItemModal";
 import SavedOutfitModal from "../components/SavedOutfitModal";
 import ItemDetailModal from "../components/ItemDetailModal";
+import ClosetBackdrop from "../components/ClosetBackdrop";
 import { getNormalizedCategory } from "../utils/category";
+import { itemFacets, isRefined, matchesFilter, NO_REFINE, sortWardrobe, WARDROBE_SORTS } from "../utils/wardrobeFilter";
+import type { RefineValue, WardrobeSort } from "../utils/wardrobeFilter";
+import RefineFilters from "../components/taxonomy/RefineFilters";
 import "../App.css";
 
 const CATEGORY_FILTERS: { value: GarmentCategory | "all"; label: string }[] = [
@@ -85,7 +88,14 @@ export default function Closet() {
   // Navigation & filtering state
   const [activeTab, setActiveTab] = useState<ActiveTab>("closet");
   const [activeFilter, setActiveFilter] = useState<GarmentCategory | "all">("all");
+  const [refine, setRefine] = useState<RefineValue>(NO_REFINE);
+  const [sort, setSort] = useState<WardrobeSort>("newest");
   const [searchQuery, setSearchQuery] = useState("");
+  // Item types belong to one category, traditions to jewellery
+  const chooseCategory = (category: GarmentCategory | "all") => {
+    setActiveFilter(category);
+    setRefine((r) => ({ ...r, typeId: "all", tradition: category === "jewellery" ? r.tradition : "all" }));
+  };
 
   // Real data from Supabase
   const [items, setItems] = useState<WardrobeItem[]>([]);
@@ -195,7 +205,8 @@ export default function Closet() {
       await removeItem(item);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to delete item.";
-      alert(msg);
+      setFeedbackMsg({ type: "error", text: msg });
+      setTimeout(() => setFeedbackMsg(null), 6000);
     }
   };
 
@@ -280,23 +291,21 @@ export default function Closet() {
     setSelectedOccasion("");
   };
 
-  // Filter items using normalized taxonomy
-  const filteredItems =
-    activeFilter === "all"
-      ? items
-      : items.filter((item) => getNormalizedCategory(item) === activeFilter);
-
-  const searchedItems = searchQuery
-    ? filteredItems.filter((item) => {
-        const normalized = getNormalizedCategory(item);
-        return (
-          item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          normalized.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          item.color?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          item.subcategory?.toLowerCase().includes(searchQuery.toLowerCase())
-        );
-      })
+  // Category, style, type and tradition combine; search matches every word
+  // across name, type, category, colour, material, style and tradition
+  const facets = useMemo(() => new Map(items.map((it) => [it.id, itemFacets(it)])), [items]);
+  const categoryItems =
+    activeFilter === "all" ? items : items.filter((item) => facets.get(item.id)?.category === activeFilter);
+  const filteredItems = sortWardrobe(
+    categoryItems.filter((item) =>
+      matchesFilter(item, refine, facets.get(item.id))
+    ),
+    sort
+  );
+  const searchedItems = searchQuery.trim()
+    ? filteredItems.filter((item) => matchesFilter(item, { query: searchQuery }, facets.get(item.id)))
     : filteredItems;
+  const refined = isRefined(refine);
 
   const outfitHasItems = Object.keys(outfitSlots).length > 0;
 
@@ -310,7 +319,8 @@ export default function Closet() {
       <Navbar />
 
       <main className="page-content">
-        <div className="page">
+        <div className="page closet-page">
+          <ClosetBackdrop />
           {/* Page Header */}
           <div className="page-header">
             <div className="page-header-left">
@@ -387,22 +397,34 @@ export default function Closet() {
                     <button
                       key={f.value}
                       className={`filter-chip${activeFilter === f.value ? " active" : ""}`}
-                      onClick={() => setActiveFilter(f.value)}
+                      onClick={() => chooseCategory(f.value)}
                     >
                       {f.label}
                     </button>
                   ))}
                 </div>
 
-                <button className="btn btn-secondary btn-sm">
-                  <SlidersHorizontal size={14} />
-                  Sort
-                </button>
+                <select
+                  className="form-select sort-select"
+                  value={sort}
+                  onChange={(e) => setSort(e.target.value as WardrobeSort)}
+                  aria-label="Sort wardrobe"
+                  id="closet-sort"
+                >
+                  {WARDROBE_SORTS.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
               </div>
+
+              {items.length > 0 && (
+                <RefineFilters items={categoryItems} category={activeFilter} value={refine} onChange={setRefine} />
+              )}
 
               {/* Feedback toast */}
               {feedbackMsg && (
                 <div
+                  role={feedbackMsg.type === "error" ? "alert" : "status"}
                   style={{
                     padding: "10px 14px",
                     borderRadius: "var(--r-md)",
@@ -423,7 +445,7 @@ export default function Closet() {
                     }`,
                   }}
                 >
-                  <Check size={14} />
+                  {feedbackMsg.type === "success" ? <Check size={14} /> : <AlertCircle size={14} />}
                   <span>{feedbackMsg.text}</span>
                 </div>
               )}
@@ -448,6 +470,7 @@ export default function Closet() {
                   }
                 />
               ) : searchedItems.length === 0 && items.length === 0 ? (
+                <div className="closet-empty-decor">
                 <EmptyState
                   icon={Shirt}
                   title="Your closet is empty"
@@ -462,11 +485,23 @@ export default function Closet() {
                     </button>
                   }
                 />
+                </div>
               ) : searchedItems.length === 0 ? (
                 <EmptyState
                   icon={Shirt}
                   title="No items found"
-                  description={`No items match "${searchQuery}" in this category.`}
+                  description={
+                    refined
+                      ? "No items match these filters."
+                      : `No items match "${searchQuery}" in this category.`
+                  }
+                  action={
+                    refined ? (
+                      <button className="btn btn-secondary btn-sm" onClick={() => setRefine(NO_REFINE)}>
+                        Clear filters
+                      </button>
+                    ) : undefined
+                  }
                 />
               ) : (
                 <div className="item-grid">
@@ -504,12 +539,24 @@ export default function Closet() {
                     <button
                       key={f.value}
                       className={`filter-chip${activeFilter === f.value ? " active" : ""}`}
-                      onClick={() => setActiveFilter(f.value)}
+                      onClick={() => chooseCategory(f.value)}
                     >
                       {f.label}
                     </button>
                   ))}
                 </div>
+
+                {items.length > 0 && (
+                  <div className="builder-refine">
+                    <RefineFilters
+                      items={categoryItems}
+                      category={activeFilter}
+                      value={refine}
+                      onChange={setRefine}
+                      idPrefix="builder-filter"
+                    />
+                  </div>
+                )}
 
                 {items.length === 0 ? (
                   <EmptyState
@@ -528,6 +575,9 @@ export default function Closet() {
                   />
                 ) : (
                   <div className="item-grid item-grid-compact">
+                    {filteredItems.length === 0 && (
+                      <p className="field-hint" id="builder-no-match">No items match these filters.</p>
+                    )}
                     {filteredItems.map((item) => {
                       const slotCat = getNormalizedCategory(item);
                       const isSelected = outfitSlots[slotCat]?.id === item.id;

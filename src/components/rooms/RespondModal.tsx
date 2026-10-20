@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { hasBorrowReplies } from "../../services/borrowService";
 import { X, Loader2, AlertCircle } from "lucide-react";
 
 const SUGGESTIONS = {
@@ -29,10 +30,21 @@ export default function RespondModal({ accept, itemName, requesterName, onCancel
   const [reply, setReply] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // null while checking; false before migration 007 (replies can't be stored)
+  const [repliesSupported, setRepliesSupported] = useState<boolean | null>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
   // Synchronous guard: two clicks in the same tick both see submitting=false
   const inFlight = useRef(false);
   const suggestions = accept ? SUGGESTIONS.accept : SUGGESTIONS.decline;
+
+  useEffect(() => {
+    let live = true;
+    hasBorrowReplies().then((ok) => live && setRepliesSupported(ok));
+    return () => {
+      live = false;
+    };
+  }, []);
+  const repliesOff = repliesSupported === false;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -48,7 +60,7 @@ export default function RespondModal({ accept, itemName, requesterName, onCancel
     setSubmitting(true);
     setError(null);
     try {
-      await onConfirm(reply);
+      await onConfirm(repliesOff ? "" : reply);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not update the request.");
       setSubmitting(false);
@@ -91,7 +103,7 @@ export default function RespondModal({ accept, itemName, requesterName, onCancel
               className={`filter-chip${reply === s ? " active" : ""}`}
               aria-pressed={reply === s}
               onClick={() => pick(s)}
-              disabled={submitting}
+              disabled={submitting || repliesOff}
             >
               {s}
             </button>
@@ -103,11 +115,24 @@ export default function RespondModal({ accept, itemName, requesterName, onCancel
           className="form-textarea"
           rows={3}
           maxLength={500}
-          placeholder={accept ? "Add a note about care or return (optional)" : "Let them know why (optional)"}
-          value={reply}
+          placeholder={
+            repliesOff
+              ? "Replies aren't available yet"
+              : accept
+                ? "Add a note about care or return (optional)"
+                : "Let them know why (optional)"
+          }
+          value={repliesOff ? "" : reply}
           onChange={(e) => setReply(e.target.value)}
-          disabled={submitting}
+          disabled={submitting || repliesOff}
+          aria-describedby={repliesOff ? "respond-reply-unavailable" : undefined}
         />
+        {repliesOff && (
+          <p className="field-hint" id="respond-reply-unavailable">
+            Replies need database update 007, which hasn’t been applied yet. You can still{" "}
+            {accept ? "accept" : "decline"} without a message.
+          </p>
+        )}
 
         {error && (
           <div className="item-detail-error" role="alert" style={{ marginTop: 10 }}>

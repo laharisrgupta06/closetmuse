@@ -10,6 +10,8 @@ import { invokeFunction } from "./edgeFunctions";
 export interface GarmentAnalysis {
   /** "Traditional" | "Indo-Western" | "Western" | "Unknown" */
   style_branch: string;
+  /** Jewellery design tradition, e.g. "Kundan"; absent from older deployments */
+  design_tradition?: string;
   /** e.g. "Clothing" | "Footwear" | "Bags" | "Jewellery" | "Accessories" | "Other" */
   major_category: string;
   /** e.g. "Saree" | "Kurti" | "Jeans" | "Sneakers" */

@@ -37,10 +37,12 @@ export interface WardrobeItem {
   user_id: string;
   name: string;
   category: GarmentCategory;
-  /** "Traditional" | "Western" | "Unknown" — top-level taxonomy branch */
+  /** Aesthetic: "Traditional" | "Western" | "Indo-Western"; "Unknown" or empty = unspecified */
   style_branch?: string;
-  /** Specific garment type, e.g. "Saree", "Kurti", "Jeans", "Sneakers" */
+  /** Item type, e.g. "Saree", "Kurti", "Jeans", "Sneakers" (see utils/taxonomy) */
   subcategory?: string;
+  /** Optional design tradition, mainly jewellery (e.g. "Kundan"); needs migration 008 */
+  design_tradition?: string | null;
   color: string;
   material?: string;
   pattern?: string;

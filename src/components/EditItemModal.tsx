@@ -2,12 +2,18 @@
  * EditItemModal.tsx
  * Modal dialog for inspecting and editing a wardrobe item's metadata.
  */
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { X, Check, Trash2, Loader2, AlertCircle } from "lucide-react";
 import type { WardrobeItem, GarmentCategory, GarmentOccasion, GarmentStyle } from "../types";
-import { updateWardrobeItem, deleteWardrobeItem } from "../services/wardrobeService";
+import { updateWardrobeItem, deleteWardrobeItem, hasDesignTraditionColumn } from "../services/wardrobeService";
+import type { WardrobeItemUpdate } from "../services/wardrobeService";
 import { getNormalizedCategory } from "../utils/category";
+import { normalizeAesthetic } from "../utils/taxonomy";
+import { diffItemForm, formValuesFrom } from "../utils/itemEdits";
+import AestheticPicker from "./taxonomy/AestheticPicker";
+import ItemTypeInput from "./taxonomy/ItemTypeInput";
+import TraditionInput from "./taxonomy/TraditionInput";
 import "../App.css";
 
 const CATEGORIES: { value: GarmentCategory; label: string }[] = [
@@ -46,8 +52,6 @@ const STYLES: { value: GarmentStyle; label: string }[] = [
   { value: "eclectic", label: "Eclectic" },
 ];
 
-const STYLE_BRANCHES = ["Traditional", "Indo-Western", "Western", "Unknown"];
-
 interface EditItemModalProps {
   item: WardrobeItem;
   isOpen: boolean;
@@ -63,6 +67,13 @@ export default function EditItemModal({
   onUpdated,
   onDeleted,
 }: EditItemModalProps) {
+  // What the form first shows. Saving sends only fields that differ from this,
+  // so untouched stored values (a legacy "Unknown" style, a category stored
+  // as "accessories" but listed under Bags) are never rewritten.
+  const initial = useMemo(
+    () => ({ ...formValuesFrom(item), category: getNormalizedCategory(item) as string }),
+    [item]
+  );
   const [name, setName] = useState(item.name);
   const [category, setCategory] = useState<GarmentCategory>(getNormalizedCategory(item));
   const [styleBranch, setStyleBranch] = useState(item.style_branch ?? "");
@@ -74,6 +85,20 @@ export default function EditItemModal({
   const [style, setStyle] = useState<GarmentStyle | "">((item.style as GarmentStyle) ?? "");
   const [brand, setBrand] = useState(item.brand ?? "");
   const [notes, setNotes] = useState(item.notes ?? "");
+  const [designTradition, setDesignTradition] = useState(item.design_tradition ?? "");
+  // A row read after migration 008 carries the column (even when null)
+  const [traditionAvailable, setTraditionAvailable] = useState<boolean | null>(
+    "design_tradition" in item ? true : null
+  );
+
+  useEffect(() => {
+    if (traditionAvailable !== null) return;
+    let live = true;
+    hasDesignTraditionColumn().then((ok) => live && setTraditionAvailable(ok));
+    return () => {
+      live = false;
+    };
+  }, [traditionAvailable]);
 
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -87,19 +112,25 @@ export default function EditItemModal({
     setSaving(true);
     setError(null);
     try {
-      const updated = await updateWardrobeItem(item.id, {
+      const changes = diffItemForm(initial, {
         name,
         category,
-        style_branch: styleBranch || undefined,
-        subcategory: subcategory || undefined,
-        color: color || undefined,
-        material: material || undefined,
-        pattern: pattern || undefined,
-        occasion: occasion || undefined,
-        style: style || undefined,
-        brand: brand || undefined,
-        notes: notes || undefined,
+        style_branch: styleBranch,
+        subcategory,
+        color,
+        material,
+        pattern,
+        occasion,
+        style,
+        brand,
+        notes,
+        design_tradition: designTradition,
       });
+      if (Object.keys(changes).length === 0) {
+        onClose();
+        return;
+      }
+      const updated = await updateWardrobeItem(item.id, changes as WardrobeItemUpdate);
       onUpdated(updated);
       onClose();
     } catch (err) {
@@ -202,12 +233,11 @@ export default function EditItemModal({
 
         {/* Content & Form */}
         <form onSubmit={handleSave}>
-          <div style={{ display: "grid", gridTemplateColumns: "140px 1fr", gap: 20, marginBottom: 20 }}>
+          <div className="edit-item-top">
             {/* Image Preview */}
             <div
+              className="edit-item-preview"
               style={{
-                width: 140,
-                height: 180,
                 borderRadius: "var(--r-lg)",
                 overflow: "hidden",
                 background: "var(--cream-dark)",
@@ -231,8 +261,9 @@ export default function EditItemModal({
             {/* Main inputs */}
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <div className="form-group" style={{ marginBottom: 0 }}>
-                <label className="form-label">Garment Name *</label>
+                <label className="form-label" htmlFor="edit-name">Garment Name *</label>
                 <input
+                  id="edit-name"
                   type="text"
                   className="form-input"
                   value={name}
@@ -241,50 +272,59 @@ export default function EditItemModal({
                 />
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label className="form-label">Category</label>
-                  <select
-                    className="form-select"
-                    value={category}
-                    onChange={(e) => setCategory(e.target.value as GarmentCategory)}
-                  >
-                    {CATEGORIES.map((c) => (
-                      <option key={c.value} value={c.value}>{c.label}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label className="form-label">Branch</label>
-                  <select
-                    className="form-select"
-                    value={styleBranch}
-                    onChange={(e) => setStyleBranch(e.target.value)}
-                  >
-                    <option value="">Select branch</option>
-                    {STYLE_BRANCHES.map((b) => (
-                      <option key={b} value={b}>{b}</option>
-                    ))}
-                  </select>
-                </div>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label" htmlFor="edit-category">Category</label>
+                <select
+                  id="edit-category"
+                  className="form-select"
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value as GarmentCategory)}
+                >
+                  {CATEGORIES.map((c) => (
+                    <option key={c.value} value={c.value}>{c.label}</option>
+                  ))}
+                </select>
+                {category === initial.category && item.category !== category && (
+                  <p className="field-hint" id="edit-category-stored">
+                    Listed under {CATEGORIES.find((c) => c.value === category)?.label} (saved as “{item.category}”).
+                    It stays saved that way unless you choose a category.
+                  </p>
+                )}
               </div>
 
               <div className="form-group" style={{ marginBottom: 0 }}>
-                <label className="form-label">Subcategory / Type</label>
-                <input
-                  type="text"
-                  className="form-input"
-                  placeholder="e.g. Saree, Kurti, Jeans"
+                <label className="form-label" htmlFor="edit-type">Item Type</label>
+                <ItemTypeInput
+                  id="edit-type"
+                  category={category}
                   value={subcategory}
-                  onChange={(e) => setSubcategory(e.target.value)}
+                  onChange={setSubcategory}
+                  aesthetic={normalizeAesthetic(styleBranch)}
                 />
               </div>
+
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <span className="form-label" id="edit-aesthetic-label">Aesthetic</span>
+                <AestheticPicker value={styleBranch} onChange={setStyleBranch} labelId="edit-aesthetic-label" />
+              </div>
+
+              {(category === "jewellery" || designTradition) && (
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label" htmlFor="edit-tradition">Design Tradition</label>
+                  <TraditionInput
+                    id="edit-tradition"
+                    value={designTradition}
+                    onChange={setDesignTradition}
+                    aesthetic={normalizeAesthetic(styleBranch)}
+                    available={traditionAvailable}
+                  />
+                </div>
+              )}
             </div>
           </div>
 
           {/* Additional Fashion Attributes */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+          <div className="edit-item-attrs">
             <div className="form-group" style={{ marginBottom: 0 }}>
               <label className="form-label">Colour</label>
               <input

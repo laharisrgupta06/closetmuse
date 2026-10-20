@@ -13,3 +13,4 @@ export {
   inferCategoryFromText,
   getNormalizedCategory,
 } from "../../supabase/functions/_shared/category.ts";
+export type { GarmentCategory } from "../../supabase/functions/_shared/category.ts";

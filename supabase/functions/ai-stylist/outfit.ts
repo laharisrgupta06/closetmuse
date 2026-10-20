@@ -2,6 +2,7 @@
 // the structured response schema, and validation of what comes back.
 
 import { type GarmentCategory, getNormalizedCategory } from "../_shared/category.ts";
+import { normalizeAesthetic } from "../_shared/taxonomy.ts";
 
 export interface StylistItemRow {
   id: string;
@@ -9,6 +10,8 @@ export interface StylistItemRow {
   category: string;
   subcategory?: string | null;
   style_branch?: string | null;
+  /** Exists after migration 008 */
+  design_tradition?: string | null;
   color?: string | null;
   material?: string | null;
   pattern?: string | null;
@@ -74,7 +77,9 @@ export function buildCatalog(items: StylistItemRow[]) {
     const entry: Record<string, string> = { id: item.id, name: item.name };
     const fields: [string, string | null | undefined][] = [
       ["type", item.subcategory],
-      ["tradition", item.style_branch],
+      // Traditional / Western / Indo-Western; "Unknown" is left out
+      ["aesthetic", normalizeAesthetic(item.style_branch)],
+      ["design_tradition", item.design_tradition],
       ["color", item.color],
       ["material", item.material],
       ["pattern", item.pattern],

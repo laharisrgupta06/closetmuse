@@ -70,3 +70,55 @@ Deno.test("base64ByteLength matches the decoded size", () => {
     assertEquals(base64ByteLength(b64), s.length);
   }
 });
+
+Deno.test("curated types and known aliases are written as their listed label", () => {
+  assertEquals(normalizeAnalysis({ ...valid, subcategory: "hobo bag" }).subcategory, "Hobo Bag");
+  assertEquals(normalizeAnalysis({ ...valid, major_category: "Clothing", subcategory: "Sari" }).subcategory, "Saree");
+  assertEquals(normalizeAnalysis({ ...valid, major_category: "Jewellery", subcategory: "jhumki" }).subcategory, "Jhumkas");
+  assertEquals(normalizeAnalysis({ ...valid, major_category: "Footwear", subcategory: "Mojri" }).subcategory, "Mojaris");
+});
+
+Deno.test("an uncurated type is kept as the model wrote it", () => {
+  assertEquals(normalizeAnalysis({ ...valid, subcategory: "Bamboo-handle Bag" }).subcategory, "Bamboo-handle Bag");
+});
+
+Deno.test("design tradition is kept for jewellery only and canonicalised", () => {
+  const j = { ...valid, major_category: "Jewellery", subcategory: "Jhumkas" };
+  assertEquals(normalizeAnalysis({ ...j, design_tradition: "kundan" }).design_tradition, "Kundan");
+  assertEquals(normalizeAnalysis({ ...j, design_tradition: "Nizami heirloom" }).design_tradition, "Nizami heirloom");
+  assertEquals(normalizeAnalysis({ ...j, design_tradition: "" }).design_tradition, undefined);
+  assertEquals(normalizeAnalysis({ ...valid, design_tradition: "Kundan" }).design_tradition, undefined);
+});
+
+Deno.test("an aesthetic name or placeholder is not a design tradition", () => {
+  const j = { ...valid, major_category: "Jewellery", subcategory: "Jhumkas" };
+  for (const v of ["Traditional", "western", "Indo-Western", "Unknown", "None", "N/A"]) {
+    assertEquals(normalizeAnalysis({ ...j, design_tradition: v }).design_tradition, undefined, v);
+  }
+  assertEquals(normalizeAnalysis({ ...j, design_tradition: "Traditional Gold" }).design_tradition, "Traditional Gold");
+});
+
+Deno.test("responses from the older prompt (no design_tradition) still validate unchanged", () => {
+  assertEquals<unknown>(normalizeAnalysis(valid), valid);
+});
+
+Deno.test("prompt lists curated types and traditions; schema adds an optional design_tradition", async () => {
+  const { ANALYSIS_PROMPT, ANALYSIS_SCHEMA } = await import("./analysis.ts");
+  for (const t of ["Jhumkas", "Juttis", "Potli Bag", "Salwar Suit", "Sports Bra", "Kundan", "Contemporary Kundan"]) {
+    if (!ANALYSIS_PROMPT.includes(t)) throw new Error(`prompt is missing ${t}`);
+  }
+  if (ANALYSIS_PROMPT.includes("Other Top")) throw new Error("catch-all types should not be offered");
+  assertEquals(ANALYSIS_SCHEMA.properties.design_tradition, { type: "STRING" });
+  assertEquals(ANALYSIS_SCHEMA.required.includes("design_tradition"), false);
+  assertEquals(ANALYSIS_SCHEMA.properties.major_category.enum, ["Clothing", "Footwear", "Bags", "Jewellery", "Accessories", "Other"]);
+});
+
+Deno.test("ambiguous predictions: no design tradition below the confidence threshold", () => {
+  const j = { ...valid, major_category: "Jewellery", subcategory: "Necklace", design_tradition: "Kundan" };
+  assertEquals(normalizeAnalysis({ ...j, confidence: 0.5 }).design_tradition, undefined);
+  assertEquals(normalizeAnalysis({ ...j, confidence: 0.69 }).design_tradition, undefined);
+  assertEquals(normalizeAnalysis({ ...j, confidence: 0.7 }).design_tradition, "Kundan");
+  // a missing confidence defaults to 0.5, so no tradition either
+  const { confidence: _c, ...noConfidence } = j;
+  assertEquals(normalizeAnalysis(noConfidence).design_tradition, undefined);
+});

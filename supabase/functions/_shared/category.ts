@@ -2,6 +2,8 @@
 // src/utils/category.ts) and the Edge Functions, so both sides agree.
 // Keep this file free of app or Deno-specific imports.
 
+import { taxonomyKeywords } from "./taxonomy.ts";
+
 export type GarmentCategory =
   | "tops"
   | "bottoms"
@@ -100,7 +102,6 @@ export const DRESS_KEYWORDS = [
   "gown",
   "lehenga",
   "anarkali",
-  "skirt",
   "jumpsuit",
   "romper",
   "one piece",
@@ -122,6 +123,7 @@ export const BOTTOM_KEYWORDS = [
   "dhoti",
   "pyjama",
   "culottes",
+  "skirt",
 ];
 
 export const OUTERWEAR_KEYWORDS = [
@@ -175,7 +177,9 @@ export const ACCESSORY_KEYWORDS = [
 ];
 
 // Earlier entries win only when two keywords end at the same word
-const KEYWORD_GROUPS: [GarmentCategory, string[]][] = [
+// ("Lehenga Choli" → dresses rather than tops). Every item type label and
+// alias from taxonomy.ts is added to its category's group.
+const BASE_GROUPS: [GarmentCategory, string[]][] = [
   ["bags", BAG_KEYWORDS],
   ["jewellery", JEWELLERY_KEYWORDS],
   ["footwear", FOOTWEAR_KEYWORDS],
@@ -184,7 +188,15 @@ const KEYWORD_GROUPS: [GarmentCategory, string[]][] = [
   ["outerwear", OUTERWEAR_KEYWORDS],
   ["tops", TOP_KEYWORDS],
   ["accessories", ACCESSORY_KEYWORDS],
+  ["other", []],
 ];
+
+const TAXONOMY_PHRASES = taxonomyKeywords();
+
+const KEYWORD_GROUPS: [GarmentCategory, string[]][] = BASE_GROUPS.map(([category, words]) => [
+  category,
+  [...new Set([...words, ...TAXONOMY_PHRASES.filter((k) => k.category === category).map((k) => k.phrase)])],
+]);
 
 const KEYWORD_PATTERNS: [GarmentCategory, RegExp][] = KEYWORD_GROUPS.flatMap(
   ([category, words]) =>

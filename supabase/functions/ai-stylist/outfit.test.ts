@@ -29,7 +29,7 @@ Deno.test("catalog groups every item by role and reports empty roles", () => {
   const { groups, emptySlots } = buildCatalog(wardrobe);
   assertEquals(groups.jewellery.map((i) => i.id).sort(), ["bangles", "jhumkas", "necklace", "studs"]);
   assertEquals(groups.bag.map((i) => i.id), ["tote"]);
-  assertEquals(groups.dress[0].tradition, "Traditional");
+  assertEquals(groups.dress[0].aesthetic, "Traditional");
   assertEquals(groups.dress[0].type, "Saree");
   assert(emptySlots.includes("layer") && emptySlots.includes("accessory"));
 });
@@ -79,4 +79,16 @@ Deno.test("missing notes are kept only for slots that stayed empty", () => {
 Deno.test("garbage input yields no looks", () => {
   assertEquals(normalizeLooks(null, wardrobe), []);
   assertEquals(normalizeLooks({ looks: "no" }, wardrobe), []);
+});
+
+Deno.test("catalog sends aesthetic and design tradition; Unknown and missing values are left out", () => {
+  const { groups } = buildCatalog([
+    { id: "j1", name: "Kundan Jhumkas", category: "jewellery", subcategory: "Jhumkas", style_branch: "Traditional", design_tradition: "Kundan" },
+    { id: "j2", name: "Plain Studs", category: "jewellery", subcategory: "Stud Earrings", style_branch: "Unknown" },
+    { id: "j3", name: "Hoops", category: "jewellery", style_branch: "indo western" },
+  ]);
+  const [j1, j2, j3] = groups.jewellery;
+  assertEquals(j1, { id: "j1", name: "Kundan Jhumkas", type: "Jhumkas", aesthetic: "Traditional", design_tradition: "Kundan" });
+  assertEquals("aesthetic" in j2 || "design_tradition" in j2, false);
+  assertEquals(j3.aesthetic, "Indo-Western");
 });

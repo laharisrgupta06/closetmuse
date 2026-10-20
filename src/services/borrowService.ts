@@ -36,6 +36,24 @@ export async function requestBorrow(roomId: string, itemId: string, message: str
  * Accepts or declines a request, optionally with a reply. The status and the
  * reply are saved together by one database function call.
  */
+let repliesColumn: Promise<boolean> | null = null;
+
+/**
+ * Whether owners can attach a reply (migration 007 adds
+ * borrow_requests.response_message and the p_response argument together).
+ * Checked once per page load with a read that returns no rows.
+ */
+export function hasBorrowReplies(): Promise<boolean> {
+  repliesColumn ??= (async () => {
+    const { error } = await supabase.from("borrow_requests").select("response_message").limit(0);
+    if (!error) return true;
+    if (error.code === "42703" || error.code === "PGRST204") return false;
+    repliesColumn = null; // network or auth problem: try again next time
+    return false;
+  })();
+  return repliesColumn;
+}
+
 export async function respondToBorrow(
   requestId: string,
   accept: boolean,

@@ -6,6 +6,10 @@ import WardrobeCard, { WardrobeCardSkeleton } from "../WardrobeCard";
 import ItemDetailModal from "../ItemDetailModal";
 import { fetchMemberSharedItems } from "../../services/roomService";
 import { CATEGORY_DEFINITIONS, getNormalizedCategory } from "../../utils/category";
+import type { GarmentCategory } from "../../utils/category";
+import { isRefined, itemFacets, matchesFilter, NO_REFINE } from "../../utils/wardrobeFilter";
+import type { RefineValue } from "../../utils/wardrobeFilter";
+import RefineFilters from "../taxonomy/RefineFilters";
 import type { Room, RoomMemberProfile, SharedRoomItem, WardrobeItem } from "../../types";
 
 type SortKey = "newest" | "oldest" | "name" | "category";
@@ -21,7 +25,8 @@ export default function MemberWardrobe({ room, member, onChanged }: MemberWardro
   const [shares, setShares] = useState<SharedRoomItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [filter, setFilter] = useState("all");
+  const [filter, setFilter] = useState<GarmentCategory | "all">("all");
+  const [refine, setRefine] = useState<RefineValue>(NO_REFINE);
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<SortKey>("newest");
   const [openItem, setOpenItem] = useState<WardrobeItem | null>(null);
@@ -59,15 +64,14 @@ export default function MemberWardrobe({ room, member, onChanged }: MemberWardro
   }, [shares]);
 
   const visible = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    const list = shares.filter(
-      (s) =>
-        (filter === "all" || getNormalizedCategory(s.item) === filter) &&
-        (!q ||
-          [s.item.name, s.item.subcategory, s.item.color, s.item.material]
-            .filter(Boolean)
-            .some((v) => String(v).toLowerCase().includes(q)))
-    );
+    // Category, style, type, tradition and search combine
+    const list = shares.filter((s) => {
+      const f = itemFacets(s.item);
+      return (
+        (filter === "all" || f.category === filter) &&
+        matchesFilter(s.item, { ...refine, query: search }, f)
+      );
+    });
     const order = CATEGORY_DEFINITIONS.map((c) => c.value as string);
     return [...list].sort((a, b) => {
       if (sort === "name") return a.item.name.localeCompare(b.item.name);
@@ -77,7 +81,17 @@ export default function MemberWardrobe({ room, member, onChanged }: MemberWardro
       const diff = new Date(b.shared_at).getTime() - new Date(a.shared_at).getTime();
       return sort === "newest" ? diff : -diff;
     });
-  }, [shares, filter, search, sort]);
+  }, [shares, filter, refine, search, sort]);
+
+  const categoryItems = useMemo(
+    () => shares.map((s) => s.item).filter((it) => filter === "all" || getNormalizedCategory(it) === filter),
+    [shares, filter]
+  );
+  const chooseCategory = (category: GarmentCategory | "all") => {
+    setFilter(category);
+    setRefine((r) => ({ ...r, typeId: "all", tradition: category === "jewellery" ? r.tradition : "all" }));
+  };
+  const refined = isRefined(refine);
 
   const name = member.is_me ? "Your" : `${member.display_name}'s`;
 
@@ -109,14 +123,14 @@ export default function MemberWardrobe({ room, member, onChanged }: MemberWardro
           </div>
         </div>
         <div className="filter-chips">
-          <button className={`filter-chip${filter === "all" ? " active" : ""}`} onClick={() => setFilter("all")}>
+          <button className={`filter-chip${filter === "all" ? " active" : ""}`} onClick={() => chooseCategory("all")}>
             All ({shares.length})
           </button>
           {CATEGORY_DEFINITIONS.filter((c) => counts.has(c.value)).map((c) => (
             <button
               key={c.value}
               className={`filter-chip${filter === c.value ? " active" : ""}`}
-              onClick={() => setFilter(c.value)}
+              onClick={() => chooseCategory(c.value)}
             >
               {c.label} ({counts.get(c.value)})
             </button>
@@ -134,6 +148,16 @@ export default function MemberWardrobe({ room, member, onChanged }: MemberWardro
           <option value="category">Category</option>
         </select>
       </div>
+
+      {shares.length > 0 && (
+        <RefineFilters
+          items={categoryItems}
+          category={filter}
+          value={refine}
+          onChange={setRefine}
+          idPrefix="member-filter"
+        />
+      )}
 
       {loading ? (
         <div className="item-grid">
@@ -153,7 +177,18 @@ export default function MemberWardrobe({ room, member, onChanged }: MemberWardro
           description={member.is_me ? "Use “Share your items” on the room page to choose pieces for this room." : "Their closet stays private until they choose items to share in this room."}
         />
       ) : visible.length === 0 ? (
-        <EmptyState icon={Search} title="No items found" description="Try another category or search term." />
+        <EmptyState
+          icon={Search}
+          title="No items found"
+          description={refined ? "No items match these filters." : "Try another category or search term."}
+          action={
+            refined ? (
+              <button className="btn btn-secondary btn-sm" onClick={() => setRefine(NO_REFINE)}>
+                Clear filters
+              </button>
+            ) : undefined
+          }
+        />
       ) : (
         <div className="item-grid" id="member-items">
           {visible.map(({ item }) => (
