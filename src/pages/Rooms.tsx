@@ -118,6 +118,7 @@ export default function Rooms() {
   const [members, setMembers] = useState<RoomMemberProfile[]>([]);
   const [itemsLoading, setItemsLoading] = useState<LoadingState>("idle");
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
   const loadRooms = useCallback(async () => {
@@ -175,14 +176,20 @@ export default function Rooms() {
     setMembers([]);
     setItemSearch("");
     setActiveFilter("all");
+    setNotice(null);
     loadRoomDetail(room.id);
   };
 
-  const handleRoomReady = (room: Room) => {
+  const handleRoomReady = (room: Room, how: "created" | "joined") => {
     setShowCreateModal(false);
     setShowJoinModal(false);
     loadRooms();
     handleRoomSelect(room);
+    setNotice(
+      how === "created"
+        ? `Room created. Share the invite code ${room.invite_code} so others can join.`
+        : `You joined ${room.name}.`
+    );
   };
 
   const handleCopyCode = async () => {
@@ -411,6 +418,40 @@ export default function Rooms() {
                     </div>
                   </div>
                 </div>
+
+                {notice && (
+                  <div
+                    role="status"
+                    id="room-notice"
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 8,
+                      padding: "10px 12px",
+                      marginBottom: 16,
+                      background: "var(--gold-pale)",
+                      border: "1px solid var(--border)",
+                      borderRadius: "var(--r-md)",
+                      fontSize: 13,
+                      color: "var(--espresso)",
+                    }}
+                  >
+                    <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <Check size={14} style={{ flexShrink: 0 }} />
+                      {notice}
+                    </span>
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      onClick={() => setNotice(null)}
+                      aria-label="Dismiss"
+                      style={{ width: 24, height: 24 }}
+                    >
+                      <CloseIcon />
+                    </button>
+                  </div>
+                )}
 
                 {detailError && (
                   <div style={{ marginBottom: 16 }}>
@@ -648,7 +689,7 @@ export default function Rooms() {
       {showCreateModal && (
         <CreateRoomModal
           onClose={() => setShowCreateModal(false)}
-          onCreated={handleRoomReady}
+          onCreated={(room) => handleRoomReady(room, "created")}
         />
       )}
 
@@ -656,7 +697,7 @@ export default function Rooms() {
       {showJoinModal && (
         <JoinRoomModal
           onClose={() => setShowJoinModal(false)}
-          onJoined={handleRoomReady}
+          onJoined={(room) => handleRoomReady(room, "joined")}
         />
       )}
 

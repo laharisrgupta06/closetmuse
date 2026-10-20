@@ -15,7 +15,8 @@ import {
 import Navbar from "../components/Navbar";
 import EmptyState from "../components/EmptyState";
 import WardrobeCard from "../components/WardrobeCard";
-import type { GarmentOccasion, GarmentStyle, WardrobeItem } from "../types";
+import OutfitBoard from "../components/OutfitBoard";
+import type { GarmentOccasion, GarmentStyle } from "../types";
 import {
   fetchWardrobeItems,
   requestStylistRecommendation,
@@ -27,7 +28,6 @@ import {
   deleteSavedOutfit,
   type SavedOutfit,
 } from "../services/outfitService";
-import { getNormalizedCategory } from "../utils/category";
 import "../App.css";
 
 const OCCASIONS: { value: GarmentOccasion; label: string }[] = [
@@ -56,89 +56,6 @@ const STYLES: { value: GarmentStyle; label: string }[] = [
 
 
 type WardrobeSource = "my_closet" | "room";
-
-// ── Slot label mapping ────────────────────────────────────────────────────────
-const SLOT_LABELS: Record<string, string> = {
-  tops: "Top",
-  bottoms: "Bottom",
-  dresses: "Dress / One-Piece",
-  outerwear: "Outerwear",
-  footwear: "Footwear",
-  accessories: "Accessories",
-  bags: "Bag",
-  jewellery: "Jewellery",
-  other: "Other",
-};
-
-const SLOT_ORDER = [
-  "dresses",
-  "tops",
-  "bottoms",
-  "outerwear",
-  "footwear",
-  "bags",
-  "jewellery",
-  "accessories",
-  "other",
-];
-
-// ── OutfitSlots component ─────────────────────────────────────────────────────
-
-function OutfitSlots({ items }: { items: WardrobeItem[] }) {
-  // Group items by category
-  const grouped = new Map<string, WardrobeItem[]>();
-  for (const item of items) {
-    const cat = getNormalizedCategory(item);
-    if (!grouped.has(cat)) grouped.set(cat, []);
-    grouped.get(cat)!.push(item);
-  }
-
-  // Sort categories by SLOT_ORDER
-  const orderedCategories = SLOT_ORDER.filter((c) => grouped.has(c));
-  // Any categories not in SLOT_ORDER go at the end
-  for (const cat of grouped.keys()) {
-    if (!SLOT_ORDER.includes(cat)) orderedCategories.push(cat);
-  }
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-      {orderedCategories.map((cat) => {
-        const catItems = grouped.get(cat)!;
-        const label = SLOT_LABELS[cat] || cat;
-        return (
-          <div key={cat}>
-            <div
-              style={{
-                fontSize: 11,
-                fontWeight: 700,
-                textTransform: "uppercase",
-                letterSpacing: "0.08em",
-                color: "var(--brown-muted)",
-                marginBottom: 10,
-                paddingBottom: 6,
-                borderBottom: "1px solid var(--border-light)",
-              }}
-            >
-              {label}
-            </div>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))",
-                gap: 14,
-              }}
-            >
-              {catItems.map((item) => (
-                <WardrobeCard key={item.id} item={item} />
-              ))}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 
 export default function Stylist() {
   const [activeTab, setActiveTab] = useState<"stylist" | "saved">("stylist");
@@ -224,38 +141,45 @@ export default function Stylist() {
     }
   };
 
+  const totalLooks = stylingResult
+    ? stylingResult.looks.length || 1 + stylingResult.alternativeLooks.length
+    : 0;
+
   const handleCycleAlternative = () => {
-    if (
-      !stylingResult ||
-      !stylingResult.alternativeLooks ||
-      stylingResult.alternativeLooks.length === 0
-    ) {
-      return;
-    }
-    const totalLooks = 1 + stylingResult.alternativeLooks.length;
+    if (totalLooks < 2) return;
     setActiveLookIndex((prev) => (prev + 1) % totalLooks);
     setSavedSuccess(false);
   };
 
-  // Determine which items to display (main outfit vs alternative look)
-  const currentItems =
-    stylingResult && activeLookIndex > 0
+  // The look being shown: structured looks when the server provides them,
+  // otherwise the plain item lists from older server versions
+  const currentLook = stylingResult?.looks[activeLookIndex];
+  const currentItems = currentLook
+    ? currentLook.pieces.map((p) => p.item)
+    : stylingResult && activeLookIndex > 0
       ? stylingResult.alternativeLooks[activeLookIndex - 1] ||
         stylingResult.outfitItems
       : stylingResult?.outfitItems || [];
+  const currentNotes = currentLook
+    ? currentLook.stylingNotes
+    : activeLookIndex === 0
+      ? stylingResult?.stylingNotes ?? ""
+      : "";
 
   const handleSaveLook = async () => {
     if (currentItems.length === 0 || savingLook) return;
     setSavingLook(true);
     try {
       const lookName =
-        [style, occasion, "Look"].filter(Boolean).join(" ") || "Curated Look";
+        currentLook?.title ||
+        [style, occasion, "Look"].filter(Boolean).join(" ") ||
+        "Curated Look";
 
       const saved = await saveOutfit({
         name: lookName,
         occasion,
         style,
-        styling_notes: stylingResult?.stylingNotes,
+        styling_notes: currentNotes || undefined,
         items: currentItems,
       });
 
@@ -713,6 +637,7 @@ export default function Stylist() {
                           {activeLookIndex === 0
                             ? "AI Recommendation"
                             : `Alternative Look #${activeLookIndex}`}
+                          {totalLooks > 1 ? ` · ${activeLookIndex + 1} of ${totalLooks}` : ""}
                         </div>
                         <div
                           style={{
@@ -722,13 +647,12 @@ export default function Stylist() {
                             marginTop: 4,
                           }}
                         >
-                          Your Styled Look
+                          {currentLook?.title || "Your Styled Look"}
                         </div>
                       </div>
 
                       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                        {stylingResult.alternativeLooks &&
-                          stylingResult.alternativeLooks.length > 0 && (
+                        {totalLooks > 1 && (
                             <button
                               type="button"
                               className="btn btn-secondary btn-sm"
@@ -766,7 +690,7 @@ export default function Stylist() {
                     </div>
 
                     {/* AI Styling Notes */}
-                    {stylingResult.stylingNotes && (
+                    {currentNotes && (
                       <div
                         style={{
                           padding: "14px 16px",
@@ -790,7 +714,7 @@ export default function Stylist() {
                         >
                           Stylist Notes
                         </div>
-                        {stylingResult.stylingNotes}
+                        {currentNotes}
                       </div>
                     )}
 
@@ -803,7 +727,14 @@ export default function Stylist() {
                         >
                           Pieces in this look ({currentItems.length})
                         </div>
-                        <OutfitSlots items={currentItems} />
+                        <OutfitBoard
+                          pieces={
+                            currentLook
+                              ? currentLook.pieces
+                              : currentItems.map((item) => ({ item }))
+                          }
+                          missing={currentLook?.missing}
+                        />
                       </div>
                     ) : (
                       <EmptyState

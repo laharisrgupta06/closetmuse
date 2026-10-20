@@ -22,10 +22,20 @@ export interface IsolationResult {
   /** Share of the output's pixels that are transparent (0–1) */
   transparentRatio: number;
   /**
-   * "uncertain" when most of the kept item is only semi-transparent, i.e.
-   * the model could not cleanly tell item from background.
+   * "uncertain" when the cut-out failed a quality check: background was
+   * kept, part of the item was erased, or the item is mostly semi-transparent.
    */
   quality: "clean" | "uncertain";
+  /** Why the result is uncertain, in words the user can act on */
+  issue?: string;
+}
+
+/** Item bounding box inside the image that was segmented, in pixels */
+interface Rect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
 }
 
 export class BackgroundRemovalError extends Error {
@@ -52,6 +62,12 @@ const TRANSPARENT_ALPHA = 16;
 const OPAQUE_ALPHA = 240;
 /** Below this share of solid pixels (of all kept pixels) the cut-out is uncertain */
 const MIN_SOLID_SHARE = 0.65;
+/** Above this share of kept pixels outside the item's box, background was kept */
+const MAX_OUTSIDE_KEPT = 0.25;
+/** Below this share of the box's width or height, part of the item was erased */
+const MIN_BOX_SPAN = 0.6;
+/** Without a box: above this share of kept pixels along the photo's edges, background was kept */
+const MAX_EDGE_KEPT = 0.4;
 
 // One segmentation at a time: each run holds the model and full-size buffers in memory
 let queue: Promise<unknown> = Promise.resolve();
@@ -73,28 +89,31 @@ async function runIsolation(
   box2d?: [number, number, number, number]
 ): Promise<IsolationResult> {
   let segmented: Blob;
+  let itemBox: Rect | undefined;
   try {
-    const input = (box2d && (await cropToBox(source, box2d))) || source;
-    segmented = await withTimeout(removeBackground(input, CONFIG), TIMEOUT_MS);
+    const cropped = box2d ? await cropToBox(source, box2d) : null;
+    itemBox = cropped?.box;
+    segmented = await withTimeout(removeBackground(cropped?.blob ?? source, CONFIG), TIMEOUT_MS);
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     throw new BackgroundRemovalError(`Background removal failed: ${reason}`);
   }
 
-  const { blob, transparentRatio, quality } = await verifyAndTrim(segmented);
+  const { blob, transparentRatio, quality, issue } = await verifyAndTrim(segmented, itemBox);
   const baseName = source.name.replace(/\.[^/.]+$/, "") || "garment";
   const file = new File([blob], `${baseName}-isolated.png`, { type: "image/png" });
-  return { file, previewUrl: URL.createObjectURL(blob), transparentRatio, quality };
+  return { file, previewUrl: URL.createObjectURL(blob), transparentRatio, quality, issue };
 }
 
 /**
- * Crops the photo to the bounding box plus an 8% margin. Returns null when
- * the box is unusable or already covers nearly the whole photo.
+ * Crops the photo to the bounding box plus an 8% margin, and reports where
+ * the box lies inside the crop. Returns null when the box is unusable or
+ * already covers nearly the whole photo.
  */
 async function cropToBox(
   source: File,
   [ymin, xmin, ymax, xmax]: [number, number, number, number]
-): Promise<Blob | null> {
+): Promise<{ blob: Blob; box: Rect } | null> {
   if (ymin >= ymax || xmin >= xmax) return null;
   if ((xmax - xmin) / 1000 > 0.9 && (ymax - ymin) / 1000 > 0.9) return null;
 
@@ -124,16 +143,23 @@ async function cropToBox(
   }
   ctx.drawImage(bitmap, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
   bitmap.close();
-  return new Promise((r) => canvas.toBlob(r, "image/png"));
+  const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, "image/png"));
+  if (!blob) return null;
+  return {
+    blob,
+    box: { x: (xmin * width) / 1000 - cropX, y: (ymin * height) / 1000 - cropY, w: boxW, h: boxH },
+  };
 }
 
 /**
  * Confirms the segmentation produced a transparent background around a
- * visible item, then crops away fully transparent margins.
+ * visible item, checks it for kept background or erased parts, then crops
+ * away fully transparent margins.
  */
 async function verifyAndTrim(
-  segmented: Blob
-): Promise<{ blob: Blob; transparentRatio: number; quality: IsolationResult["quality"] }> {
+  segmented: Blob,
+  itemBox?: Rect
+): Promise<{ blob: Blob; transparentRatio: number; quality: IsolationResult["quality"]; issue?: string }> {
   const bitmap = await createImageBitmap(segmented);
   const { width, height } = bitmap;
   const canvas = document.createElement("canvas");
@@ -145,13 +171,34 @@ async function verifyAndTrim(
   bitmap.close();
   const { data } = ctx.getImageData(0, 0, width, height);
 
+  // Item box with a small tolerance, and the photo's outer edge band
+  const tol = itemBox ? Math.max(itemBox.w, itemBox.h) * 0.03 : 0;
+  const bx0 = itemBox ? itemBox.x - tol : 0;
+  const by0 = itemBox ? itemBox.y - tol : 0;
+  const bx1 = itemBox ? itemBox.x + itemBox.w + tol : width;
+  const by1 = itemBox ? itemBox.y + itemBox.h + tol : height;
+  const edge = Math.max(2, Math.round(Math.min(width, height) * 0.03));
+
   let transparent = 0;
   let solid = 0;
+  let outside = 0, outsideKept = 0, edgePx = 0, edgeKept = 0;
   let minX = width, minY = height, maxX = -1, maxY = -1;
+  let inMinX = width, inMinY = height, inMaxX = -1, inMaxY = -1;
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const alpha = data[(y * width + x) * 4 + 3];
-      if (alpha < TRANSPARENT_ALPHA) {
+      const kept = alpha >= TRANSPARENT_ALPHA;
+      const inBox = x >= bx0 && x < bx1 && y >= by0 && y < by1;
+      const onEdge = x < edge || y < edge || x >= width - edge || y >= height - edge;
+      if (!inBox) {
+        outside++;
+        if (kept) outsideKept++;
+      }
+      if (onEdge) {
+        edgePx++;
+        if (kept) edgeKept++;
+      }
+      if (!kept) {
         transparent++;
       } else {
         if (alpha > OPAQUE_ALPHA) solid++;
@@ -159,6 +206,12 @@ async function verifyAndTrim(
         if (x > maxX) maxX = x;
         if (y < minY) minY = y;
         if (y > maxY) maxY = y;
+        if (inBox) {
+          if (x < inMinX) inMinX = x;
+          if (x > inMaxX) inMaxX = x;
+          if (y < inMinY) inMinY = y;
+          if (y > inMaxY) inMaxY = y;
+        }
       }
     }
   }
@@ -196,8 +249,24 @@ async function verifyAndTrim(
 
   const blob = await new Promise<Blob | null>((r) => out.toBlob(r, "image/png"));
   if (!blob) throw new BackgroundRemovalError("Background removal failed: could not encode PNG.");
-  const solidShare = solid / (total - transparent);
-  return { blob, transparentRatio, quality: solidShare < MIN_SOLID_SHARE ? "uncertain" : "clean" };
+
+  let issue: string | undefined;
+  if (itemBox && outside > 0 && outsideKept / outside > MAX_OUTSIDE_KEPT) {
+    issue = "Some of the background around the item was kept.";
+  } else if (!itemBox && edgeKept / edgePx > MAX_EDGE_KEPT) {
+    issue = "Some of the background around the item was kept.";
+  } else if (
+    itemBox &&
+    (inMaxX < 0 ||
+      (inMaxX - inMinX + 1) / itemBox.w < MIN_BOX_SPAN ||
+      (inMaxY - inMinY + 1) / itemBox.h < MIN_BOX_SPAN)
+  ) {
+    issue = "Part of the item may have been removed with the background.";
+  } else if (solid / (total - transparent) < MIN_SOLID_SHARE) {
+    issue = "The item's edges came out faint or see-through.";
+  }
+
+  return { blob, transparentRatio, quality: issue ? "uncertain" : "clean", issue };
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {

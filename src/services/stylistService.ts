@@ -17,10 +17,28 @@ export interface StylingRequestParams {
   wardrobeSource: "my_closet" | "room";
 }
 
+export interface StylistLookPiece {
+  item: WardrobeItem;
+  /** Role in the outfit, e.g. "dress", "footwear", "jewellery" */
+  slot: string;
+  /** Why this piece works with the outfit */
+  reason: string;
+}
+
+export interface StylistLook {
+  title: string;
+  stylingNotes: string;
+  pieces: StylistLookPiece[];
+  /** Roles left empty on purpose, with what would complete the look */
+  missing: { slot: string; note: string }[];
+}
+
 export interface StylingResultData {
   outfitItems: WardrobeItem[];
   stylingNotes: string;
   alternativeLooks: WardrobeItem[][];
+  /** Main look first, then alternatives; empty when the server is an older version */
+  looks: StylistLook[];
 }
 
 /**
@@ -46,6 +64,12 @@ interface StylistResponse {
   outfit_items?: string[];
   styling_notes?: string;
   alternative_looks?: string[][];
+  looks?: {
+    title?: string;
+    styling_notes?: string;
+    pieces?: { id: string; slot?: string; reason?: string }[];
+    missing?: { slot: string; note: string }[];
+  }[];
 }
 
 /**
@@ -62,6 +86,7 @@ export async function requestStylistRecommendation(
       stylingNotes:
         "Your wardrobe is currently empty. Please add items to your closet first so the AI Stylist has pieces to select from!",
       alternativeLooks: [],
+      looks: [],
     };
   }
 
@@ -98,11 +123,34 @@ export async function requestStylistRecommendation(
           .filter((item): item is WardrobeItem => Boolean(item))
       : [];
 
+  // Structured looks (current server); ids are mapped onto the user's own items
+  const looks: StylistLook[] = (Array.isArray(data.looks) ? data.looks : [])
+    .map((look) => ({
+      title: look.title || "Your look",
+      stylingNotes: look.styling_notes || "",
+      pieces: (look.pieces ?? [])
+        .map((p) => ({ item: itemMap.get(p.id), slot: p.slot ?? "", reason: p.reason ?? "" }))
+        .filter((p): p is StylistLookPiece => Boolean(p.item)),
+      missing: Array.isArray(look.missing) ? look.missing : [],
+    }))
+    .filter((look) => look.pieces.length > 0);
+
+  if (looks.length > 0) {
+    const [main, ...alternatives] = looks;
+    return {
+      outfitItems: main.pieces.map((p) => p.item),
+      stylingNotes: main.stylingNotes || "Here is your curated outfit.",
+      alternativeLooks: alternatives.map((l) => l.pieces.map((p) => p.item)),
+      looks,
+    };
+  }
+
   return {
     outfitItems: toItems(data.outfit_items),
     stylingNotes: data.styling_notes || "Here is your curated outfit.",
     alternativeLooks: Array.isArray(data.alternative_looks)
       ? data.alternative_looks.map(toItems)
       : [],
+    looks: [],
   };
 }

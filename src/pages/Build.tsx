@@ -138,6 +138,8 @@ interface BatchItem {
   status: "pending" | "analysing" | "done" | "error";
   isolationStatus: "pending" | "isolating" | "done" | "error";
   isolationQuality?: "clean" | "uncertain";
+  /** Why an uncertain cut-out was flagged */
+  isolationIssue?: string;
   isolationError?: string | null;
   /** Save the background-removed PNG (true) or the original photo (false) */
   useIsolated: boolean;
@@ -195,6 +197,7 @@ function SingleItemMode() {
   const [isolatedFile, setIsolatedFile] = useState<File | null>(null);
   const [isolationState, setIsolationState] = useState<"idle" | "isolating" | "done" | "error">("idle");
   const [isolationQuality, setIsolationQuality] = useState<"clean" | "uncertain" | null>(null);
+  const [isolationIssue, setIsolationIssue] = useState<string | null>(null);
   const [isolationError, setIsolationError] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"isolated" | "original">("isolated");
@@ -220,6 +223,7 @@ function SingleItemMode() {
     setIsolatedFile(null);
     setIsolationState("idle");
     setIsolationQuality(null);
+    setIsolationIssue(null);
     setIsolationError(null);
     setViewMode("isolated");
     setForm(EMPTY_FORM);
@@ -260,6 +264,7 @@ function SingleItemMode() {
       setIsolatedFile(iso.file);
       setPreviewUrl(iso.previewUrl);
       setIsolationQuality(iso.quality);
+      setIsolationIssue(iso.issue ?? null);
       // Show (and therefore save) the cut-out only when it is clean
       setViewMode(iso.quality === "clean" ? "isolated" : "original");
       setIsolationState("done");
@@ -331,6 +336,7 @@ function SingleItemMode() {
     setIsolatedFile(null);
     setIsolationState("idle");
     setIsolationQuality(null);
+    setIsolationIssue(null);
     setIsolationError(null);
     setForm(EMPTY_FORM);
     setAnalysis(null);
@@ -493,8 +499,9 @@ function SingleItemMode() {
             )}
             {isolationState === "done" && isolationQuality === "uncertain" && (
               <div style={{ fontSize: 12, color: "var(--brown-soft)", marginBottom: 8 }}>
-                Background removal was unreliable on this photo, so the original is selected.
-                Switch to <strong>Isolated</strong> to use the cut-out anyway.
+                Background removal was unreliable on this photo
+                {isolationIssue ? ` (${isolationIssue.replace(/\.$/, "").toLowerCase()})` : ""}, so the
+                original is selected. Switch to <strong>Isolated</strong> to use the cut-out anyway.
               </div>
             )}
             {isolationState === "error" && (
@@ -814,6 +821,18 @@ function SingleItemMode() {
           </div>
         )}
 
+        {/* Which image will be stored */}
+        {file && isolationState !== "isolating" && (
+          <p id="save-image-choice" style={{ fontSize: 12, color: "var(--brown-soft)", textAlign: "center", margin: 0 }}>
+            Will save:{" "}
+            <strong>
+              {viewMode === "isolated" && isolatedFile
+                ? "background-removed image (transparent PNG)"
+                : "original photo (background not removed)"}
+            </strong>
+          </p>
+        )}
+
         {/* Save button */}
         <button
           className={`btn ${saveState === "saved" ? "btn-secondary" : "btn-primary"}`}
@@ -886,6 +905,7 @@ function BatchMode() {
         isolatedFile: iso.file,
         previewUrl: iso.previewUrl,
         isolationQuality: iso.quality,
+        isolationIssue: iso.issue,
         useIsolated: iso.quality === "clean",
       });
     } catch (isoErr) {
@@ -1247,7 +1267,9 @@ function BatchMode() {
                             : item.isolationStatus === "done" && item.isolationQuality === "clean"
                               ? "✨ Background removed"
                               : item.isolationStatus === "done"
-                                ? "Background removal unreliable — original selected (Inspect to change)"
+                                ? item.useIsolated
+                                  ? "Unreliable cut-out chosen — background-removed image will be saved"
+                                  : `Background removal unreliable${item.isolationIssue ? `: ${item.isolationIssue.replace(/\.$/, "").toLowerCase()}` : ""} — original selected (Inspect to change)`
                                 : item.isolationStatus === "error"
                                   ? `${item.isolationError ?? "Background removal failed."} Original will be saved.`
                                   : null}
