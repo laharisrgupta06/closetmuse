@@ -5,14 +5,9 @@
 // caller's own JWT (so RLS applies) and filtered to their user_id; any
 // "items" sent in the request body are ignored.
 
-import { createClient } from "npm:@supabase/supabase-js@2";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
+import { authenticate } from "../_shared/auth.ts";
+import { generateJson, GeminiError } from "../_shared/gemini.ts";
+import { corsHeaders, jsonResponse } from "../_shared/http.ts";
 
 interface WardrobeItem {
   id: string;
@@ -34,6 +29,40 @@ interface StylistRequestBody {
   wardrobe_source?: "my_closet" | "room";
 }
 
+// Gemini model fallback chain — tries each model until one succeeds.
+// This gracefully handles per-model daily quota exhaustion (429).
+// gemini-3.8-flash was dropped: it took 55–78 s per request in testing,
+// while gemini-3.5-flash picked the same outfit in ~5 s.
+const STYLIST_MODELS = [
+  "gemini-3.5-flash",
+  "gemini-3.5-flash-lite",
+  "gemini-flash-lite-latest",
+];
+
+const STYLIST_RESPONSE_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    outfit_items: {
+      type: "ARRAY",
+      items: { type: "STRING" },
+      description:
+        "Array of exact item IDs selected from the wardrobe inventory for the main outfit.",
+    },
+    styling_notes: {
+      type: "STRING",
+      description:
+        "Detailed advice explaining the outfit choice, color harmony, and styling tips.",
+    },
+    alternative_looks: {
+      type: "ARRAY",
+      items: { type: "ARRAY", items: { type: "STRING" } },
+      description:
+        "Optional alternative outfits, each being an array of exact item IDs from the wardrobe inventory.",
+    },
+  },
+  required: ["outfit_items", "styling_notes"],
+};
+
 Deno.serve(async (req: Request) => {
   // Handle CORS preflight
   if (req.method === "OPTIONS") {
@@ -41,72 +70,25 @@ Deno.serve(async (req: Request) => {
   }
 
   if (req.method !== "POST") {
-    return new Response(JSON.stringify({ error: "Method not allowed" }), {
-      status: 405,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return jsonResponse({ error: "Method not allowed" }, 405);
   }
 
   try {
     // Authenticate the caller before doing any work
-    const token = (req.headers.get("Authorization") ?? "")
-      .replace(/^Bearer\s+/i, "")
-      .trim();
-    const supabaseUrl = Deno.env.get("SUPABASE_URL");
-    const supabaseKey =
-      req.headers.get("apikey") ?? Deno.env.get("SUPABASE_ANON_KEY");
-
-    if (!supabaseUrl || !supabaseKey) {
-      return new Response(
-        JSON.stringify({ error: "Supabase is not configured for this function." }),
-        {
-          status: 500,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
-      );
-    }
-
-    if (!token) {
-      return new Response(
-        JSON.stringify({ error: "Authentication required." }),
-        {
-          status: 401,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
-      );
-    }
-
-    const supabase = createClient(supabaseUrl, supabaseKey, {
-      global: { headers: { Authorization: `Bearer ${token}` } },
-      auth: { persistSession: false, autoRefreshToken: false },
-    });
-
-    const { data: userData, error: userError } =
-      await supabase.auth.getUser(token);
-
-    if (userError || !userData?.user) {
-      return new Response(
-        JSON.stringify({ error: "Invalid or expired session." }),
-        {
-          status: 401,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
-      );
-    }
+    const auth = await authenticate(req);
+    if (auth.response) return auth.response;
+    const { supabase, user } = auth;
 
     const apiKey =
       Deno.env.get("GEMINI_API_KEY") || Deno.env.get("VITE_GEMINI_API_KEY");
 
     if (!apiKey) {
-      return new Response(
-        JSON.stringify({
+      return jsonResponse(
+        {
           error:
             "GEMINI_API_KEY is not configured in Supabase Edge Function secrets.",
-        }),
-        {
-          status: 500,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
+        },
+        500
       );
     }
 
@@ -117,35 +99,23 @@ Deno.serve(async (req: Request) => {
     const { data: wardrobeRows, error: wardrobeError } = await supabase
       .from("wardrobe_items")
       .select("id, name, category, color, material, pattern, occasion, style, brand, notes")
-      .eq("user_id", userData.user.id);
+      .eq("user_id", user.id);
 
     if (wardrobeError) {
       console.error("Failed to load wardrobe:", wardrobeError.message);
-      return new Response(
-        JSON.stringify({ error: "Failed to load your wardrobe." }),
-        {
-          status: 500,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
-      );
+      return jsonResponse({ error: "Failed to load your wardrobe." }, 500);
     }
 
     const items: WardrobeItem[] = wardrobeRows ?? [];
 
     // Gracefully handle empty wardrobe
     if (items.length === 0) {
-      return new Response(
-        JSON.stringify({
-          outfit_items: [],
-          styling_notes:
-            "Your wardrobe is currently empty. Please add some clothes to your closet first so the AI Stylist can assemble a look for you!",
-          alternative_looks: [],
-        }),
-        {
-          status: 200,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
-      );
+      return jsonResponse({
+        outfit_items: [],
+        styling_notes:
+          "Your wardrobe is currently empty. Please add some clothes to your closet first so the AI Stylist can assemble a look for you!",
+        alternative_looks: [],
+      });
     }
 
     // Prepare item list for Gemini
@@ -181,159 +151,49 @@ WARDROBE INVENTORY (JSON):
 ${JSON.stringify(itemCatalog, null, 2)}
 `;
 
-    // Gemini model fallback chain — tries each model until one succeeds.
-    // This gracefully handles per-model daily quota exhaustion (429).
-    const STYLIST_MODELS = [
-      "gemini-3.8-flash",
-      "gemini-3.1-flash-lite",
-      "gemini-2.5-flash-lite",
-      "gemini-flash-lite-latest",
-    ];
-
-    const geminiRequestBody = JSON.stringify({
-      contents: [{ parts: [{ text: systemPrompt }] }],
-      generationConfig: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: "OBJECT",
-          properties: {
-            outfit_items: {
-              type: "ARRAY",
-              items: { type: "STRING" },
-              description:
-                "Array of exact item IDs selected from the wardrobe inventory for the main outfit.",
-            },
-            styling_notes: {
-              type: "STRING",
-              description:
-                "Detailed advice explaining the outfit choice, color harmony, and styling tips.",
-            },
-            alternative_looks: {
-              type: "ARRAY",
-              items: { type: "ARRAY", items: { type: "STRING" } },
-              description:
-                "Optional alternative outfits, each being an array of exact item IDs from the wardrobe inventory.",
-            },
-          },
-          required: ["outfit_items", "styling_notes"],
-        },
-      },
+    const { data: parsedResult } = await generateJson({
+      apiKey,
+      models: STYLIST_MODELS,
+      parts: [{ text: systemPrompt }],
+      generationConfig: { responseSchema: STYLIST_RESPONSE_SCHEMA },
     });
 
-    let geminiResponse: Response | null = null;
-    let lastModelError = "";
-
-    for (const model of STYLIST_MODELS) {
-      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-      let attempts = 0;
-      const maxAttempts = 2; // 1 retry on 503 per model before moving to next
-
-      while (attempts < maxAttempts) {
-        attempts++;
-        try {
-          const res = await fetch(geminiUrl, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: geminiRequestBody,
-          });
-
-          if (res.ok) {
-            geminiResponse = res;
-            break;
-          }
-
-          const isTransient = res.status === 503 || res.status === 429;
-          if (isTransient && attempts < maxAttempts) {
-            console.warn(`Model ${model} returned ${res.status}, retrying…`);
-            await new Promise((r) => setTimeout(r, 1500));
-            continue;
-          }
-
-          lastModelError = `${model} → HTTP ${res.status}`;
-          break;
-        } catch (fetchErr) {
-          lastModelError = `${model} → fetch error: ${fetchErr}`;
-          break;
-        }
-      }
-
-      if (geminiResponse) break; // success — stop trying models
-    }
-
-    if (!geminiResponse || !geminiResponse.ok) {
-      console.error("All Gemini models failed. Last error:", lastModelError);
-      return new Response(
-        JSON.stringify({
-          error: `Gemini API unavailable across all models. Last error: ${lastModelError}`,
-        }),
-        {
-          status: 502,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
-      );
-    }
-
-    const geminiData = await geminiResponse.json();
-    const candidateText =
-      geminiData?.candidates?.[0]?.content?.parts?.[0]?.text;
-
-    if (!candidateText) {
-      return new Response(
-        JSON.stringify({ error: "Gemini did not return any outfit response." }),
-        {
-          status: 502,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
-      );
-    }
-
-    let parsedResult;
-    try {
-      parsedResult = JSON.parse(candidateText);
-    } catch {
-      return new Response(
-        JSON.stringify({ error: "Failed to parse Gemini response as JSON." }),
-        {
-          status: 502,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
-      );
-    }
+    const result = (parsedResult ?? {}) as {
+      outfit_items?: unknown;
+      styling_notes?: unknown;
+      alternative_looks?: unknown;
+    };
 
     // STRICT SANITIZATION: Verify that every returned item ID actually exists in the provided wardrobe
-    const sanitizedOutfitItems = Array.isArray(parsedResult.outfit_items)
-      ? parsedResult.outfit_items.filter((id: string) => validItemIds.has(id))
+    const sanitizedOutfitItems = Array.isArray(result.outfit_items)
+      ? result.outfit_items.filter((id: string) => validItemIds.has(id))
       : [];
 
-    const sanitizedAlternatives = Array.isArray(parsedResult.alternative_looks)
-      ? parsedResult.alternative_looks.map((look: string[]) =>
+    const sanitizedAlternatives = Array.isArray(result.alternative_looks)
+      ? result.alternative_looks.map((look: string[]) =>
           Array.isArray(look) ? look.filter((id) => validItemIds.has(id)) : []
         )
       : [];
 
-    return new Response(
-      JSON.stringify({
-        outfit_items: sanitizedOutfitItems,
-        styling_notes:
-          parsedResult.styling_notes || "Here is your styled outfit.",
-        alternative_looks: sanitizedAlternatives,
-      }),
-      {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
-    );
+    return jsonResponse({
+      outfit_items: sanitizedOutfitItems,
+      styling_notes:
+        (typeof result.styling_notes === "string" && result.styling_notes) ||
+        "Here is your styled outfit.",
+      alternative_looks: sanitizedAlternatives,
+    });
   } catch (error) {
+    if (error instanceof GeminiError) {
+      console.error("Gemini failed for ai-stylist:", error.message);
+      return jsonResponse({ error: error.message, code: error.code }, error.status);
+    }
     console.error("Edge function unexpected error:", error);
-    return new Response(
-      JSON.stringify({
+    return jsonResponse(
+      {
         error:
           error instanceof Error ? error.message : "Internal server error",
-      }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
+      },
+      500
     );
   }
 });

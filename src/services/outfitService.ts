@@ -31,6 +31,13 @@ export interface NewSavedOutfitParams {
   items: WardrobeItem[];
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** True when the saved_outfits table has not been created yet (migration 002) */
+function isMissingTable(error: { code?: string } | null): boolean {
+  return error?.code === "PGRST205" || error?.code === "42P01";
+}
+
 function getLocalCacheKey(userId: string): string {
   return `closetmuse_saved_outfits_${userId}`;
 }
@@ -102,8 +109,10 @@ export async function saveOutfit(
       .select("*")
       .single();
 
-    if (insertErr) {
-      console.warn("saved_outfits DB insert note (migration 002 may not be run):", insertErr.message);
+    if (insertErr && !isMissingTable(insertErr)) {
+      throw new Error(`Could not save outfit: ${insertErr.message}`);
+    } else if (insertErr) {
+      console.warn("saved_outfits table missing (migration 002 not applied); using fallback storage.");
     } else if (dbData) {
       savedOutfitResult = {
         id: dbData.id,
@@ -118,6 +127,7 @@ export async function saveOutfit(
       };
     }
   } catch (err) {
+    if (err instanceof Error && err.message.startsWith("Could not save outfit")) throw err;
     console.warn("saved_outfits DB insert threw:", err);
   }
 
@@ -265,27 +275,26 @@ export async function deleteSavedOutfit(outfitId: string): Promise<void> {
   if (!userData?.user) return;
   const user = userData.user;
 
-  // Try DB delete
-  try {
-    await supabase
+  // Database rows have UUIDs; fallback outfits use "outfit-…" ids
+  if (UUID_RE.test(outfitId)) {
+    const { error } = await supabase
       .from("saved_outfits")
       .delete()
       .eq("id", outfitId)
       .eq("user_id", user.id);
-  } catch {
-    // DB table might not exist
+    if (error && !isMissingTable(error)) {
+      throw new Error(`Could not delete outfit: ${error.message}`);
+    }
   }
 
-  // Remove from user_metadata
-  try {
-    const metadataOutfits: SavedOutfit[] =
-      (user.user_metadata?.saved_outfits as SavedOutfit[]) || [];
-    const filtered = metadataOutfits.filter((o) => o.id !== outfitId);
-    await supabase.auth.updateUser({
-      data: { saved_outfits: filtered },
+  // Remove from user_metadata only if it is stored there
+  const metadataOutfits: SavedOutfit[] =
+    (user.user_metadata?.saved_outfits as SavedOutfit[]) || [];
+  if (metadataOutfits.some((o) => o.id === outfitId)) {
+    const { error } = await supabase.auth.updateUser({
+      data: { saved_outfits: metadataOutfits.filter((o) => o.id !== outfitId) },
     });
-  } catch {
-    // Ignore
+    if (error) throw new Error(`Could not delete outfit: ${error.message}`);
   }
 
   // Remove from local cache

@@ -127,50 +127,53 @@ export async function updateWardrobeItem(
 }
 
 /**
- * Deletes a wardrobe item by ID, and deletes its associated image from Supabase Storage.
+ * Returns the object path inside the wardrobe-images bucket for one of our
+ * public image URLs, or null for any other URL.
+ */
+function storagePathFromUrl(url?: string | null): string | null {
+  if (!url) return null;
+  const marker = `/object/public/${BUCKET}/`;
+  const idx = url.indexOf(marker);
+  if (idx === -1) return null;
+  const path = decodeURIComponent(url.slice(idx + marker.length).split("?")[0]);
+  return path || null;
+}
+
+/**
+ * Deletes a wardrobe item by ID, then removes its image from Supabase Storage.
+ * Throws if no row was deleted (already gone, or owned by someone else), so
+ * the UI never drops an item that still exists.
  */
 export async function deleteWardrobeItem(id: string, imageUrl?: string): Promise<void> {
   const userId = await getUserId();
 
-  let targetImageUrl = imageUrl;
-  if (!targetImageUrl) {
-    try {
-      const { data } = await supabase
-        .from("wardrobe_items")
-        .select("image_url")
-        .eq("id", id)
-        .eq("user_id", userId)
-        .single();
-      if (data?.image_url) {
-        targetImageUrl = data.image_url;
-      }
-    } catch {
-      // non-fatal, proceed with delete
-    }
-  }
-
-  // Attempt storage file deletion if the image is in our bucket
-  if (targetImageUrl && targetImageUrl.includes(BUCKET)) {
-    try {
-      const bucketIdx = targetImageUrl.indexOf(BUCKET);
-      if (bucketIdx !== -1) {
-        const fullPath = targetImageUrl.substring(bucketIdx + BUCKET.length + 1).split("?")[0];
-        if (fullPath) {
-          await supabase.storage.from(BUCKET).remove([fullPath]);
-        }
-      }
-    } catch (storageErr) {
-      console.warn("Storage image deletion warning (non-fatal):", storageErr);
-    }
-  }
-
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("wardrobe_items")
     .delete()
     .eq("id", id)
-    .eq("user_id", userId);
+    .eq("user_id", userId)
+    .select("id, image_url");
 
   if (error) throw new Error(`Database delete failed: ${error.message}`);
+  if (!data || data.length === 0) {
+    throw new Error(
+      "This item could not be deleted. It may already have been removed, or it belongs to another account."
+    );
+  }
+
+  // Best-effort image cleanup: the item itself is already gone
+  const path = storagePathFromUrl(data[0].image_url ?? imageUrl);
+  if (path) {
+    const { data: removed, error: storageError } = await supabase.storage
+      .from(BUCKET)
+      .remove([path]);
+    if (storageError || !removed?.length) {
+      console.warn(
+        `Image "${path}" was not removed from storage (non-fatal):`,
+        storageError?.message ?? "not permitted or already removed"
+      );
+    }
+  }
 }
 
 /**

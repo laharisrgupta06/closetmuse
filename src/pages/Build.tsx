@@ -27,7 +27,7 @@ import {
 import { useNavigate } from "react-router-dom";
 import Navbar from "../components/Navbar";
 import type { GarmentCategory, GarmentOccasion, GarmentStyle } from "../types";
-import { analyseGarmentImage, fileToBase64 } from "../services/geminiService";
+import { analyseGarmentImage, encodeImageForAnalysis } from "../services/geminiService";
 import type { GarmentAnalysis } from "../services/geminiService";
 import { uploadGarmentImage, createWardrobeItem } from "../services/wardrobeService";
 import { isolateGarment } from "../services/imageIsolationService";
@@ -137,11 +137,23 @@ interface BatchItem {
   rawPreviewUrl: string;
   status: "pending" | "analysing" | "done" | "error";
   isolationStatus: "pending" | "isolating" | "done" | "error";
+  isolationQuality?: "clean" | "uncertain";
+  isolationError?: string | null;
+  /** Save the background-removed PNG (true) or the original photo (false) */
+  useIsolated: boolean;
   analysis: GarmentAnalysis | null;
   form: GarmentForm;
   error: string | null;
   /** true = will be saved; false = rejected by user */
   approved: boolean;
+  /** Already added to the closet (prevents duplicates when retrying a save) */
+  saved?: boolean;
+}
+
+const MAX_BATCH_ITEMS = 20;
+
+function isImageFile(f: File): boolean {
+  return f.type.startsWith("image/") || /\.(heic|heif)$/i.test(f.name);
 }
 
 /* ─── Helpers ─────────────────────────────────────────────────── */
@@ -182,6 +194,9 @@ function SingleItemMode() {
   const [file, setFile] = useState<File | null>(null);
   const [isolatedFile, setIsolatedFile] = useState<File | null>(null);
   const [isolationState, setIsolationState] = useState<"idle" | "isolating" | "done" | "error">("idle");
+  const [isolationQuality, setIsolationQuality] = useState<"clean" | "uncertain" | null>(null);
+  const [isolationError, setIsolationError] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"isolated" | "original">("isolated");
   const [form, setForm] = useState<GarmentForm>(EMPTY_FORM);
   const [analysisState, setAnalysisState] = useState<AnalysisState>("idle");
@@ -193,13 +208,19 @@ function SingleItemMode() {
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
   const handleFile = async (f: File) => {
-    if (!f.type.startsWith("image/")) return;
+    if (!isImageFile(f)) {
+      setUploadError(`"${f.name}" is not an image. Choose a JPG, PNG, WebP or HEIC photo.`);
+      return;
+    }
+    setUploadError(null);
     setFile(f);
     const url = URL.createObjectURL(f);
     setRawPreviewUrl(url);
     setPreviewUrl(url);
     setIsolatedFile(null);
     setIsolationState("idle");
+    setIsolationQuality(null);
+    setIsolationError(null);
     setViewMode("isolated");
     setForm(EMPTY_FORM);
     setAnalysis(null);
@@ -207,34 +228,44 @@ function SingleItemMode() {
     setAnalysisError(null);
     setSaveState("idle");
     setSaveError(null);
-    await runAnalysis(f);
+    // Analysis first (≈2s) so its bounding box can guide background removal;
+    // background removal runs either way, even if analysis fails.
+    const result = await runAnalysis(f);
+    await runIsolation(f, result?.box_2d);
   };
 
-  const runAnalysis = async (f: File) => {
+  const runAnalysis = async (f: File): Promise<GarmentAnalysis | null> => {
     setAnalysisState("analysing");
-    setIsolationState("isolating");
     setAnalysisError(null);
     try {
-      const { base64, mimeType } = await fileToBase64(f);
+      const { base64, mimeType } = await encodeImageForAnalysis(f);
       const result = await analyseGarmentImage(base64, mimeType);
       setAnalysis(result);
       setForm((prev) => ({ ...prev, ...mapAnalysisToForm(result) }));
       setAnalysisState("done");
-
-      // Isolate garment & remove background
-      try {
-        const iso = await isolateGarment(f, result.box_2d, result.polygon);
-        setIsolatedFile(iso.file);
-        setPreviewUrl(iso.previewUrl);
-        setIsolationState("done");
-      } catch (isoErr) {
-        console.warn("Background removal error:", isoErr);
-        setIsolationState("error");
-      }
+      return result;
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Analysis failed.";
       setAnalysisError(msg);
       setAnalysisState("error");
+      return null;
+    }
+  };
+
+  const runIsolation = async (f: File, box2d?: [number, number, number, number]) => {
+    setIsolationState("isolating");
+    setIsolationError(null);
+    try {
+      const iso = await isolateGarment(f, box2d);
+      setIsolatedFile(iso.file);
+      setPreviewUrl(iso.previewUrl);
+      setIsolationQuality(iso.quality);
+      // Show (and therefore save) the cut-out only when it is clean
+      setViewMode(iso.quality === "clean" ? "isolated" : "original");
+      setIsolationState("done");
+    } catch (isoErr) {
+      console.warn("Background removal error:", isoErr);
+      setIsolationError(isoErr instanceof Error ? isoErr.message : "Background removal failed.");
       setIsolationState("error");
     }
   };
@@ -262,7 +293,8 @@ function SingleItemMode() {
     setSaveError(null);
     try {
       let imageUrl: string | undefined;
-      const fileToUpload = isolatedFile || file;
+      // Save the version the user is looking at
+      const fileToUpload = viewMode === "isolated" && isolatedFile ? isolatedFile : file;
       if (fileToUpload) imageUrl = await uploadGarmentImage(fileToUpload);
       await createWardrobeItem(
         {
@@ -298,6 +330,8 @@ function SingleItemMode() {
     setFile(null);
     setIsolatedFile(null);
     setIsolationState("idle");
+    setIsolationQuality(null);
+    setIsolationError(null);
     setForm(EMPTY_FORM);
     setAnalysis(null);
     setAnalysisState("idle");
@@ -355,7 +389,7 @@ function SingleItemMode() {
               type="file"
               accept="image/*"
               style={{ display: "none" }}
-              onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ""; }}
               aria-label="File upload input"
             />
             <input
@@ -364,9 +398,14 @@ function SingleItemMode() {
               accept="image/*"
               capture="environment"
               style={{ display: "none" }}
-              onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ""; }}
               aria-label="Camera capture input"
             />
+            {uploadError && (
+              <p style={{ fontSize: 12, color: "var(--rose)", marginTop: 10 }} role="alert">
+                {uploadError}
+              </p>
+            )}
           </div>
         ) : (
           <div
@@ -413,6 +452,9 @@ function SingleItemMode() {
                 >
                   Original
                 </button>
+                <span style={{ fontSize: 11, color: "var(--brown-muted)", alignSelf: "center" }}>
+                  Shown version is saved
+                </span>
               </div>
             )}
             <button
@@ -442,6 +484,29 @@ function SingleItemMode() {
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: analysisState === "analysing" ? 6 : 0 }}>
                 <Loader2 size={14} style={{ animation: "spin 1s linear infinite", color: "var(--gold)" }} />
                 <span style={{ fontSize: 12, color: "var(--brown-soft)" }}>Isolating clothing & removing background…</span>
+              </div>
+            )}
+            {isolationState === "done" && isolationQuality === "clean" && (
+              <div style={{ fontSize: 12, color: "var(--brown-soft)", marginBottom: 8 }}>
+                ✨ Background removed (transparent PNG).
+              </div>
+            )}
+            {isolationState === "done" && isolationQuality === "uncertain" && (
+              <div style={{ fontSize: 12, color: "var(--brown-soft)", marginBottom: 8 }}>
+                Background removal was unreliable on this photo, so the original is selected.
+                Switch to <strong>Isolated</strong> to use the cut-out anyway.
+              </div>
+            )}
+            {isolationState === "error" && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 12, color: "var(--brown-soft)", marginBottom: 8 }}>
+                <span>{isolationError} The original photo will be saved.</span>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  type="button"
+                  onClick={() => file && runIsolation(file, analysis?.box_2d)}
+                >
+                  Retry background removal
+                </button>
               </div>
             )}
             {analysisState === "done" && analysis && (
@@ -788,51 +853,70 @@ function BatchMode() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [inspectItem, setInspectItem] = useState<BatchItem | null>(null);
   const [inspectMode, setInspectMode] = useState<"isolated" | "original">("isolated");
+  const [batchNotice, setBatchNotice] = useState<string | null>(null);
 
-  const analyseItem = async (id: string, file: File) => {
-    setItems((prev) =>
-      prev.map((it) => (it.id === id ? { ...it, status: "analysing", isolationStatus: "isolating" } : it))
-    );
+  const patchItem = (id: string, patch: Partial<BatchItem>) =>
+    setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it)));
+
+  const runItemAnalysis = async (id: string, file: File): Promise<GarmentAnalysis | null> => {
+    patchItem(id, { status: "analysing", error: null });
     try {
-      const { base64, mimeType } = await fileToBase64(file);
+      const { base64, mimeType } = await encodeImageForAnalysis(file);
       const result = await analyseGarmentImage(base64, mimeType);
-
-      // Isolate image
-      let isolatedFile: File | undefined = undefined;
-      let isolatedUrl: string | undefined = undefined;
-      try {
-        const iso = await isolateGarment(file, result.box_2d, result.polygon);
-        isolatedFile = iso.file;
-        isolatedUrl = iso.previewUrl;
-      } catch (isoErr) {
-        console.warn("Batch isolation error:", isoErr);
-      }
-
-      setItems((prev) =>
-        prev.map((it) =>
-          it.id === id
-            ? {
-                ...it,
-                status: "done",
-                isolationStatus: isolatedFile ? "done" : "error",
-                isolatedFile: isolatedFile ?? it.file,
-                previewUrl: isolatedUrl ?? it.previewUrl,
-                analysis: result,
-                form: { ...EMPTY_FORM, ...mapAnalysisToForm(result) },
-              }
-            : it
-        )
-      );
+      patchItem(id, {
+        status: "done",
+        analysis: result,
+        form: { ...EMPTY_FORM, ...mapAnalysisToForm(result) },
+      });
+      return result;
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Analysis failed.";
-      setItems((prev) =>
-        prev.map((it) => (it.id === id ? { ...it, status: "error", error: msg } : it))
-      );
+      patchItem(id, { status: "error", error: msg });
+      return null;
     }
   };
 
+  const runItemIsolation = async (id: string, file: File, box2d?: [number, number, number, number]) => {
+    patchItem(id, { isolationStatus: "isolating", isolationError: null });
+    try {
+      const iso = await isolateGarment(file, box2d);
+      patchItem(id, {
+        isolationStatus: "done",
+        isolatedFile: iso.file,
+        previewUrl: iso.previewUrl,
+        isolationQuality: iso.quality,
+        useIsolated: iso.quality === "clean",
+      });
+    } catch (isoErr) {
+      console.warn("Batch isolation error:", isoErr);
+      patchItem(id, {
+        isolationStatus: "error",
+        isolationError: isoErr instanceof Error ? isoErr.message : "Background removal failed.",
+        useIsolated: false,
+      });
+    }
+  };
+
+  // Background removal runs whether or not the analysis succeeds
+  const analyseItem = async (id: string, file: File) => {
+    const result = await runItemAnalysis(id, file);
+    await runItemIsolation(id, file, result?.box_2d);
+  };
+
+  const setUseIsolated = (id: string, useIsolated: boolean) => {
+    patchItem(id, { useIsolated });
+    setInspectItem((prev) => (prev && prev.id === id ? { ...prev, useIsolated } : prev));
+  };
+
   const handleBatchFiles = async (files: FileList) => {
-    const validFiles = Array.from(files).filter((f) => f.type.startsWith("image/"));
+    const images = Array.from(files).filter(isImageFile);
+    const skipped = files.length - images.length;
+    const room = Math.max(0, MAX_BATCH_ITEMS - items.filter((it) => !it.saved).length);
+    const validFiles = images.slice(0, room);
+    const notices = [];
+    if (skipped > 0) notices.push(`${skipped} file${skipped !== 1 ? "s were" : " was"} skipped because ${skipped !== 1 ? "they are" : "it is"} not an image.`);
+    if (images.length > room) notices.push(`Only ${MAX_BATCH_ITEMS} photos can be processed at once; ${images.length - room} were not added.`);
+    setBatchNotice(notices.length ? notices.join(" ") : null);
     if (validFiles.length === 0) return;
 
     const newItems: BatchItem[] = validFiles.map((f) => {
@@ -844,6 +928,7 @@ function BatchMode() {
         rawPreviewUrl: url,
         status: "pending",
         isolationStatus: "pending",
+        useIsolated: false,
         analysis: null,
         form: { ...EMPTY_FORM },
         error: null,
@@ -895,7 +980,10 @@ function BatchMode() {
     );
   };
 
-  const approvedItems = items.filter((it) => it.approved && it.status === "done");
+  // Items whose analysis failed can still be saved once filled in manually
+  const approvedItems = items.filter(
+    (it) => it.approved && !it.saved && (it.status === "done" || it.status === "error")
+  );
   const canSave = approvedItems.length > 0 && approvedItems.every((it) => it.form.name.trim() && it.form.category);
 
   const handleBatchSave = async () => {
@@ -906,7 +994,7 @@ function BatchMode() {
       for (let i = 0; i < approvedItems.length; i++) {
         const item = approvedItems[i];
         setSaveProgress({ current: i + 1, total: approvedItems.length });
-        const fileToUpload = item.isolatedFile || item.file;
+        const fileToUpload = item.useIsolated && item.isolatedFile ? item.isolatedFile : item.file;
         const imageUrl = await uploadGarmentImage(fileToUpload);
         await createWardrobeItem(
           {
@@ -925,6 +1013,8 @@ function BatchMode() {
           },
           imageUrl
         );
+        // Mark as saved right away so a retry after a later failure skips it
+        patchItem(item.id, { saved: true });
       }
       setBatchSaveState("done");
       setTimeout(() => navigate("/closet"), 1500);
@@ -937,7 +1027,12 @@ function BatchMode() {
     }
   };
 
-  const analysing = items.filter((it) => it.status === "analysing" || it.status === "pending").length;
+  const analysing = items.filter(
+    (it) =>
+      !it.saved &&
+      (it.status === "analysing" || it.status === "pending" ||
+        it.isolationStatus === "isolating" || it.isolationStatus === "pending")
+  ).length;
 
   return (
     <div>
@@ -966,10 +1061,15 @@ function BatchMode() {
           accept="image/*"
           multiple
           style={{ display: "none" }}
-          onChange={(e) => { if (e.target.files?.length) handleBatchFiles(e.target.files); }}
+          onChange={(e) => { if (e.target.files?.length) handleBatchFiles(e.target.files); e.target.value = ""; }}
           aria-label="Batch file upload input"
         />
       </div>
+      {batchNotice && (
+        <p style={{ fontSize: 12, color: "var(--rose)", marginTop: -18, marginBottom: 20 }} role="alert">
+          {batchNotice}
+        </p>
+      )}
 
       {/* Items grid */}
       {items.length > 0 && (
@@ -1101,7 +1201,14 @@ function BatchMode() {
                           <div style={{ fontSize: 13, fontWeight: 600, color: "var(--rose)", marginBottom: 2 }}>
                             Analysis failed
                           </div>
-                          <div style={{ fontSize: 12, color: "var(--brown-muted)" }}>{item.error}</div>
+                          <div style={{ fontSize: 12, color: "var(--brown-muted)" }}>
+                            {item.error} Retry, or click <strong>Edit</strong> to fill in the details.
+                          </div>
+                          {!itemValid && item.approved && (
+                            <div style={{ fontSize: 11, color: "var(--rose)", marginTop: 3 }}>
+                              ⚠ Name and category required before saving
+                            </div>
+                          )}
                         </div>
                       ) : item.status === "done" ? (
                         <div>
@@ -1131,11 +1238,34 @@ function BatchMode() {
                       ) : (
                         <div style={{ fontSize: 13, color: "var(--brown-muted)" }}>Waiting to analyse…</div>
                       )}
+                      <div style={{ fontSize: 11, color: "var(--brown-muted)", marginTop: 3 }}>
+                        {item.saved
+                          ? "✓ Added to closet"
+                          : item.isolationStatus === "isolating"
+                            ? "Removing background…"
+                            : item.isolationStatus === "done" && item.isolationQuality === "clean"
+                              ? "✨ Background removed"
+                              : item.isolationStatus === "done"
+                                ? "Background removal unreliable — original selected (Inspect to change)"
+                                : item.isolationStatus === "error"
+                                  ? `${item.isolationError ?? "Background removal failed."} Original will be saved.`
+                                  : null}
+                      </div>
                     </div>
 
                     {/* Actions */}
                     <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-                      {item.status === "done" && (
+                      {item.status === "error" && !item.saved && (
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => runItemAnalysis(item.id, item.file)}
+                          style={{ fontSize: 12, padding: "4px 9px" }}
+                        >
+                          Retry
+                        </button>
+                      )}
+                      {(item.status === "done" || item.status === "error") && !item.saved && (
                         <>
                           <button
                             type="button"
@@ -1189,7 +1319,7 @@ function BatchMode() {
                   </div>
 
                   {/* Expanded edit panel */}
-                  {isExpanded && item.status === "done" && (
+                  {isExpanded && (item.status === "done" || item.status === "error") && !item.saved && (
                     <div
                       style={{
                         padding: "16px 20px 20px",
@@ -1417,7 +1547,11 @@ function BatchMode() {
                   style={{ padding: "4px 14px", fontSize: 12, borderRadius: "var(--r-full)" }}
                   onClick={() => setInspectMode("isolated")}
                 >
-                  Isolated ({inspectItem.isolationStatus === "done" ? "Clean PNG" : "Processing"})
+                  Isolated (
+                  {inspectItem.isolationStatus === "done"
+                    ? inspectItem.isolationQuality === "clean" ? "Background removed" : "Unreliable"
+                    : inspectItem.isolationStatus === "error" ? "Failed" : "Processing"}
+                  )
                 </button>
                 <button
                   type="button"
@@ -1447,7 +1581,7 @@ function BatchMode() {
                 }}
               >
                 <img
-                  src={inspectMode === "isolated" ? inspectItem.previewUrl : inspectItem.rawPreviewUrl}
+                  src={inspectMode === "isolated" && inspectItem.isolatedFile ? inspectItem.previewUrl : inspectItem.rawPreviewUrl}
                   alt="Garment preview"
                   style={{
                     maxWidth: "92%",
@@ -1459,9 +1593,21 @@ function BatchMode() {
 
               <div style={{ marginTop: 12, fontSize: 12, color: "var(--brown-muted)" }}>
                 {inspectMode === "isolated"
-                  ? "Isolated subject preview with transparent background removed."
+                  ? inspectItem.isolatedFile
+                    ? "Isolated subject with the background made transparent."
+                    : "No background-removed version is available for this photo."
                   : "Original source photo before segmentation."}
               </div>
+              {inspectItem.isolatedFile && (
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 10, fontSize: 12, color: "var(--espresso)", cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={inspectItem.useIsolated}
+                    onChange={(e) => setUseIsolated(inspectItem.id, e.target.checked)}
+                  />
+                  Save the background-removed version
+                </label>
+              )}
             </div>
 
             {/* Modal Footer */}

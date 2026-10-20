@@ -276,6 +276,8 @@ export default function Stylist() {
       await deleteSavedOutfit(id);
     } catch (err) {
       console.error("Failed to delete outfit:", err);
+      alert(err instanceof Error ? err.message : "Failed to delete outfit.");
+      loadSavedOutfits(); // restore the list to what is actually stored
     }
   };
 

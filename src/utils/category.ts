@@ -12,6 +12,9 @@ export const CATEGORY_DEFINITIONS: { value: GarmentCategory; label: string }[] =
   { value: "other", label: "Other" },
 ];
 
+// Keywords are matched as whole words, with an optional plural "s"/"es".
+// Multi-word keywords are written with spaces ("one piece" matches "one-piece").
+
 export const BAG_KEYWORDS = [
   "bag",
   "handbag",
@@ -41,6 +44,7 @@ export const JEWELLERY_KEYWORDS = [
   "jewelry",
   "jewellery",
   "jhumka",
+  "jhumki",
   "pendant",
   "brooch",
   "anklet",
@@ -49,25 +53,31 @@ export const JEWELLERY_KEYWORDS = [
   "kada",
   "payal",
   "stud",
+  "mangalsutra",
 ];
 
 export const FOOTWEAR_KEYWORDS = [
   "shoe",
   "sneaker",
+  "trainer",
   "boot",
   "sandal",
   "heel",
   "loafer",
-  "flat",
+  "flats",
   "mule",
   "slipper",
   "footwear",
   "oxford",
+  "derby",
   "pump",
   "wedge",
+  "stiletto",
+  "clog",
   "mojri",
   "jutti",
   "kolhapuri",
+  "chappal",
 ];
 
 export const DRESS_KEYWORDS = [
@@ -80,7 +90,7 @@ export const DRESS_KEYWORDS = [
   "skirt",
   "jumpsuit",
   "romper",
-  "one-piece",
+  "one piece",
 ];
 
 export const BOTTOM_KEYWORDS = [
@@ -95,8 +105,10 @@ export const BOTTOM_KEYWORDS = [
   "jogger",
   "palazzo",
   "salwar",
+  "churidar",
   "dhoti",
   "pyjama",
+  "culottes",
 ];
 
 export const OUTERWEAR_KEYWORDS = [
@@ -117,114 +129,144 @@ export const OUTERWEAR_KEYWORDS = [
 export const TOP_KEYWORDS = [
   "top",
   "shirt",
-  "t-shirt",
+  "tshirt",
   "tee",
   "blouse",
   "kurti",
   "kurta",
+  "sherwani",
   "camisole",
   "tank",
   "tunic",
   "polo",
-  "crop",
+  "sweatshirt",
 ];
 
+export const ACCESSORY_KEYWORDS = [
+  "belt",
+  "scarf",
+  "stole",
+  "dupatta",
+  "sunglasses",
+  "glasses",
+  "hat",
+  "cap",
+  "beanie",
+  "watch",
+  "tie",
+  "glove",
+  "sock",
+  "hairband",
+  "hair clip",
+  "umbrella",
+];
+
+// Earlier entries win only when two keywords end at the same word
+const KEYWORD_GROUPS: [GarmentCategory, string[]][] = [
+  ["bags", BAG_KEYWORDS],
+  ["jewellery", JEWELLERY_KEYWORDS],
+  ["footwear", FOOTWEAR_KEYWORDS],
+  ["dresses", DRESS_KEYWORDS],
+  ["bottoms", BOTTOM_KEYWORDS],
+  ["outerwear", OUTERWEAR_KEYWORDS],
+  ["tops", TOP_KEYWORDS],
+  ["accessories", ACCESSORY_KEYWORDS],
+];
+
+const KEYWORD_PATTERNS: [GarmentCategory, RegExp][] = KEYWORD_GROUPS.flatMap(
+  ([category, words]) =>
+    words.map((w): [GarmentCategory, RegExp] => [category, new RegExp(`(?:^| )${w}(?:s|es)?(?= |$)`, "g")])
+);
+
+/** Categories precise enough to always trust when stored or chosen */
+const SPECIFIC_CATEGORIES = new Set<GarmentCategory>([
+  "tops",
+  "bottoms",
+  "dresses",
+  "outerwear",
+  "footwear",
+  "bags",
+  "jewellery",
+]);
+
+/** Stored values, user choices and Gemini major_category values → app category */
+const CATEGORY_ALIASES: Record<string, GarmentCategory | "clothing"> = {
+  top: "tops",
+  tops: "tops",
+  bottom: "bottoms",
+  bottoms: "bottoms",
+  dress: "dresses",
+  dresses: "dresses",
+  outerwear: "outerwear",
+  footwear: "footwear",
+  shoe: "footwear",
+  shoes: "footwear",
+  bag: "bags",
+  bags: "bags",
+  jewellery: "jewellery",
+  jewelry: "jewellery",
+  accessory: "accessories",
+  accessories: "accessories",
+  other: "other",
+  clothing: "clothing",
+};
+
+function normalizeText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/t-shirt/g, "tshirt")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
 /**
- * Normalizes an item's category using its category, subcategory, name, or metadata.
+ * Infers a category from free text using its head noun: the keyword that
+ * appears last wins ("Dress Shirt" → tops, "Shirt Dress" → dresses), and
+ * anything after "with"/"for" is ignored ("Kurta with Dupatta" → tops).
+ */
+export function inferCategoryFromText(text?: string): GarmentCategory | null {
+  if (!text) return null;
+  const head = normalizeText(text).split(/ (?:with|for) /)[0];
+  if (!head) return null;
+
+  let best: { category: GarmentCategory; end: number } | null = null;
+  for (const [category, pattern] of KEYWORD_PATTERNS) {
+    pattern.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = pattern.exec(head))) {
+      const end = m.index + m[0].length;
+      if (!best || end > best.end) best = { category, end };
+    }
+  }
+  return best?.category ?? null;
+}
+
+/**
+ * Normalizes an item's category using its category, subcategory, and name.
  * Ensures consistent taxonomy across Build, Closet, Outfit Builder, and AI Stylist.
  *
  * Guaranteed rules:
- * - Handbags, hobo bags, totes, clutches ALWAYS classify as 'bags'.
- * - Earrings, necklaces, bangles, rings ALWAYS classify as 'jewellery'.
- * - Footwear ALWAYS classifies as 'footwear'.
- * - Never leaves handbags stranded under accessories or generic other.
+ * - A specific stored category (tops, bottoms, dresses, outerwear, footwear,
+ *   bags, jewellery) is always kept, so saved and user-chosen values are never
+ *   overridden.
+ * - Vague values (accessories, other, Gemini's "Clothing", unknown) are refined
+ *   from the subcategory, then the name. This is how handbags, hobo bags,
+ *   totes and clutches filed under Accessories show up as Bags, and earrings,
+ *   necklaces and bangles as Jewellery.
  */
 export function getNormalizedCategory(item: {
   category?: string;
   subcategory?: string;
   name?: string;
 }): GarmentCategory {
-  const cat = (item.category || "").toLowerCase().trim();
-  const sub = (item.subcategory || "").toLowerCase().trim();
-  const name = (item.name || "").toLowerCase().trim();
-  const fullText = `${sub} ${name} ${cat}`;
-
-  // 1. Bags - highest priority to prevent bags being trapped under accessories
-  if (
-    cat === "bags" ||
-    cat === "bag" ||
-    BAG_KEYWORDS.some((k) => fullText.includes(k))
-  ) {
-    return "bags";
+  const stored = CATEGORY_ALIASES[(item.category || "").toLowerCase().trim()];
+  if (stored && stored !== "clothing" && SPECIFIC_CATEGORIES.has(stored)) {
+    return stored;
   }
 
-  // 2. Jewellery - prevent jewellery being trapped under accessories
-  if (
-    cat === "jewellery" ||
-    cat === "jewelry" ||
-    JEWELLERY_KEYWORDS.some((k) => fullText.includes(k))
-  ) {
-    return "jewellery";
-  }
+  const inferred =
+    inferCategoryFromText(item.subcategory) ?? inferCategoryFromText(item.name);
+  if (inferred) return inferred;
 
-  // 3. Footwear
-  if (
-    cat === "footwear" ||
-    cat === "shoes" ||
-    cat === "shoe" ||
-    FOOTWEAR_KEYWORDS.some((k) => fullText.includes(k))
-  ) {
-    return "footwear";
-  }
-
-  // 4. Dresses / Ethnic Sets
-  if (
-    cat === "dresses" ||
-    cat === "dress" ||
-    DRESS_KEYWORDS.some((k) => fullText.includes(k))
-  ) {
-    return "dresses";
-  }
-
-  // 5. Bottoms
-  if (
-    cat === "bottoms" ||
-    cat === "bottom" ||
-    BOTTOM_KEYWORDS.some((k) => fullText.includes(k))
-  ) {
-    return "bottoms";
-  }
-
-  // 6. Outerwear
-  if (
-    cat === "outerwear" ||
-    OUTERWEAR_KEYWORDS.some((k) => fullText.includes(k))
-  ) {
-    return "outerwear";
-  }
-
-  // 7. Tops
-  if (
-    cat === "tops" ||
-    cat === "top" ||
-    TOP_KEYWORDS.some((k) => fullText.includes(k))
-  ) {
-    return "tops";
-  }
-
-  // 8. Accessories (belts, scarves, sunglasses, hats, etc.)
-  if (cat === "accessories" || cat === "accessory") {
-    return "accessories";
-  }
-
-  // Known fallback
-  if (
-    ["tops", "bottoms", "dresses", "outerwear", "footwear", "bags", "jewellery", "accessories", "other"].includes(
-      cat
-    )
-  ) {
-    return cat as GarmentCategory;
-  }
-
-  return "other";
+  return stored === "accessories" ? "accessories" : "other";
 }

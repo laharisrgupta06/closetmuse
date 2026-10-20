@@ -268,6 +268,10 @@ export default function Closet() {
       }
     } catch (err) {
       console.error("Failed to delete outfit:", err);
+      setFeedbackMsg({
+        type: "error",
+        text: err instanceof Error ? err.message : "Failed to delete outfit.",
+      });
     }
   };
 
