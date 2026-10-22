@@ -7,6 +7,7 @@ import {
   UserRound,
   Plus,
 } from "lucide-react";
+import NotificationBell from "./NotificationBell";
 import "../App.css";
 
 const NAV_ITEMS = [
@@ -57,6 +58,8 @@ export default function Navbar() {
           >
             <Wand2 size={16} />
           </button>
+
+          <NotificationBell />
 
           <button
             className="icon-btn"

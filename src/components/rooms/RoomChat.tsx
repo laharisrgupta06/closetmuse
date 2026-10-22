@@ -4,6 +4,7 @@ import EmptyState from "../EmptyState";
 import MemberAvatar from "../MemberAvatar";
 import { fetchMessages, MAX_MESSAGE_LENGTH, sendMessage, subscribeToRoom } from "../../services/chatService";
 import type { Room, RoomMemberProfile, RoomMessage } from "../../types";
+import { markRoomMessagesRead } from "../../services/notificationService";
 
 const POLL_MS = 5000;
 
@@ -23,6 +24,11 @@ const timeLabel = (iso: string) => {
 
 export default function RoomChat({ room, members }: { room: Room; members: RoomMemberProfile[] }) {
   const [messages, setMessages] = useState<RoomMessage[]>([]);
+
+  // Being in the chat means its message notifications are read
+  useEffect(() => {
+    markRoomMessagesRead(room.id).catch(() => {});
+  }, [room.id, messages.length]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [live, setLive] = useState<boolean | null>(null);

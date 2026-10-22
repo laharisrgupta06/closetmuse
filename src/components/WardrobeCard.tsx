@@ -3,6 +3,7 @@ import { Heart, Plus, Edit2, Trash2 } from "lucide-react";
 import type { WardrobeItem } from "../types";
 import { CATEGORY_DEFINITIONS, getNormalizedCategory } from "../utils/category";
 import { normalizeAesthetic } from "../utils/taxonomy";
+import { formatItemNumber, itemReference } from "../utils/numbering";
 
 interface WardrobeCardProps {
   item: WardrobeItem;
@@ -16,6 +17,8 @@ interface WardrobeCardProps {
   selectable?: boolean;
   /** Extra content under the item details (e.g. who shared it in a Room) */
   footer?: ReactNode;
+  /** Owner's name when the item belongs to someone else: shows "Maya · #012" */
+  ownerName?: string;
 }
 
 export default function WardrobeCard({
@@ -28,7 +31,9 @@ export default function WardrobeCard({
   selected = false,
   selectable = false,
   footer,
+  ownerName,
 }: WardrobeCardProps) {
+  const number = itemReference(item.item_number, ownerName);
   const handleClick = () => {
     if (selectable) {
       onSelect?.(item);
@@ -50,7 +55,7 @@ export default function WardrobeCard({
       }
       onClick={handleClick}
       role={clickable ? "button" : undefined}
-      aria-label={clickable ? `${item.name}: view details` : undefined}
+      aria-label={clickable ? `${item.name}${number ? `, ${number}` : ""}: view details` : undefined}
       tabIndex={clickable ? 0 : undefined}
       onKeyDown={
         clickable
@@ -64,6 +69,11 @@ export default function WardrobeCard({
       }
     >
       <div className="wardrobe-card-image">
+        {formatItemNumber(item.item_number) && (
+          <span className="item-number-badge" title={`Item ${number}`}>
+            {number}
+          </span>
+        )}
         {item.image_url ? (
           <img src={item.image_url} alt={item.name} loading="lazy" />
         ) : (

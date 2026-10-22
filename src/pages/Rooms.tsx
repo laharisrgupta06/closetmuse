@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Search,
   Plus,
@@ -33,13 +33,23 @@ import { fetchAllWardrobeItems } from "../services/wardrobeService";
 import { getNormalizedCategory } from "../utils/category";
 import type { Room, RoomMemberProfile, WardrobeItem, LoadingState } from "../types";
 import "../App.css";
+import { formatItemNumber } from "../utils/numbering";
+import { useLocation, useNavigate } from "react-router-dom";
 
 /** Where the user is inside a room */
 type RoomView =
   | { kind: "overview" }
   | { kind: "member"; memberId: string }
   | { kind: "chat" }
-  | { kind: "requests" };
+  | { kind: "requests"; tab?: "incoming" | "outgoing"; requestId?: string | null };
+
+/** Sent by the notification centre: open this room straight at chat or requests */
+interface OpenRoomTarget {
+  roomId: string;
+  view: "chat" | "requests";
+  tab?: "incoming" | "outgoing";
+  requestId?: string | null;
+}
 
 const overlayStyle = {
   position: "fixed",
@@ -150,13 +160,39 @@ export default function Rooms() {
     };
   }, []);
 
-  const openRoom = (room: Room) => {
-    setSelectedRoom(room);
-    setRoomView({ kind: "overview" });
-    setMembers([]);
-    setNotice(null);
-    loadMembers(room.id);
-  };
+  const openRoom = useCallback(
+    (room: Room) => {
+      setSelectedRoom(room);
+      setRoomView({ kind: "overview" });
+      setMembers([]);
+      setNotice(null);
+      loadMembers(room.id);
+    },
+    [loadMembers]
+  );
+
+  // A notification asked to open a room: do it once the rooms have loaded,
+  // then clear the request so a refresh doesn't repeat it
+  const location = useLocation();
+  const navigate = useNavigate();
+  const target = (location.state as { openRoom?: OpenRoomTarget } | null)?.openRoom;
+  const handledKey = useRef<string | null>(null);
+  useEffect(() => {
+    if (!target || roomsLoading !== "success" || handledKey.current === location.key) return;
+    handledKey.current = location.key;
+    navigate(location.pathname, { replace: true, state: null });
+    const room = rooms.find((r) => r.id === target.roomId);
+    // Deferred so state updates happen outside the effect body
+    queueMicrotask(() => {
+      if (!room) {
+        setSelectedRoom(null);
+        setNotice("That room is no longer available. You may have left it.");
+        return;
+      }
+      openRoom(room);
+      setRoomView(target.view === "chat" ? { kind: "chat" } : { kind: "requests", tab: target.tab, requestId: target.requestId });
+    });
+  }, [target, rooms, roomsLoading, location.key, location.pathname, navigate, openRoom]);
 
   const closeRoom = () => {
     setSelectedRoom(null);
@@ -372,7 +408,15 @@ export default function Rooms() {
 
               {roomView.kind === "chat" && <RoomChat room={selectedRoom} members={members} />}
 
-              {roomView.kind === "requests" && <BorrowRequests room={selectedRoom} members={members} />}
+              {roomView.kind === "requests" && (
+                <BorrowRequests
+                  key={roomView.requestId ?? "requests"}
+                  room={selectedRoom}
+                  members={members}
+                  initialTab={roomView.tab}
+                  focusRequestId={roomView.requestId ?? undefined}
+                />
+              )}
             </>
           )}
         </div>
@@ -828,6 +872,9 @@ function ShareItemsModal({
                     </div>
                     <div style={{ minWidth: 0, flex: 1 }}>
                       <div className="truncate" style={{ fontSize: 13.5, fontWeight: 600 }}>
+                        {formatItemNumber(item.item_number) && (
+                          <span className="item-number" style={{ marginRight: 6 }}>{formatItemNumber(item.item_number)}</span>
+                        )}
                         {item.name}
                       </div>
                       <div style={{ fontSize: 11.5, color: "var(--brown-muted)", textTransform: "capitalize" }}>

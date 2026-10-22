@@ -128,3 +128,23 @@ test("occasion filter and search use the stored occasion", async () => {
   assert.equal(isRefined(NO_REFINE), false);
   assert.equal(isRefined({ ...NO_REFINE, occasion: "work" }), true);
 });
+
+test("item numbers: search by #number, sort by number, stable under filters", async () => {
+  const { filterWardrobe: fw, sortWardrobe } = await import("../src/utils/wardrobeFilter.ts");
+  const rows = [
+    { id: "a", name: "White shirt", category: "tops", item_number: 1, created_at: "2026-10-01T00:00:00Z" },
+    { id: "b", name: "Gold earrings", category: "jewellery", item_number: 3, created_at: "2026-10-03T00:00:00Z" },
+    { id: "c", name: "Black trousers", category: "bottoms", item_number: 2, created_at: "2026-10-02T00:00:00Z" },
+    { id: "d", name: "Old row", category: "tops", item_number: null, created_at: "2026-09-01T00:00:00Z" },
+  ];
+  const q = (query: string) => fw(rows, { query }, (x) => x).map((x) => x.id).join();
+  assert.equal(q("#003"), "b");
+  assert.equal(q("#3"), "b");
+  assert.equal(q("item 2"), "c");
+  assert.equal(q("#9"), "");
+  assert.equal(q("#001"), "a");
+  assert.equal(sortWardrobe(rows, "number").map((x) => x.id).join(), "a,c,b,d");
+  // Filtering or sorting never changes an item's own number
+  const jewellery = fw(rows, { category: "jewellery" }, (x) => x);
+  assert.equal(jewellery[0].item_number, 3);
+});

@@ -15,6 +15,7 @@ import AestheticPicker from "./taxonomy/AestheticPicker";
 import ItemTypeInput from "./taxonomy/ItemTypeInput";
 import TraditionInput from "./taxonomy/TraditionInput";
 import "../App.css";
+import { formatItemNumber } from "../utils/numbering";
 
 const CATEGORIES: { value: GarmentCategory; label: string }[] = [
   { value: "tops", label: "Tops" },
@@ -198,7 +199,9 @@ export default function EditItemModal({
           }}
         >
           <div>
-            <div className="eyebrow">Edit Wardrobe Item</div>
+            <div className="eyebrow">
+              Edit Wardrobe Item{formatItemNumber(item.item_number) ? ` · ${formatItemNumber(item.item_number)}` : ""}
+            </div>
             <h2 style={{ fontSize: 20, margin: 0, fontFamily: "var(--font-serif)" }}>
               {item.name}
             </h2>

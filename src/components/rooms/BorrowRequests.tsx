@@ -5,17 +5,30 @@ import MemberAvatar from "../MemberAvatar";
 import RespondModal from "./RespondModal";
 import { cancelBorrow, fetchRoomBorrowRequests, respondToBorrow, type BorrowRequestView } from "../../services/borrowService";
 import type { Room, RoomMemberProfile } from "../../types";
+import { formatItemNumber, itemReference } from "../../utils/numbering";
 
 const STATUS_LABEL = { pending: "Pending", accepted: "Accepted", declined: "Declined", cancelled: "Cancelled" } as const;
 
 const formatDate = (iso?: string | null) =>
   iso ? new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "";
 
-export default function BorrowRequests({ room, members }: { room: Room; members: RoomMemberProfile[] }) {
+export default function BorrowRequests({
+  room,
+  members,
+  initialTab,
+  focusRequestId,
+}: {
+  room: Room;
+  members: RoomMemberProfile[];
+  /** Opened from a notification: start on this tab */
+  initialTab?: "incoming" | "outgoing";
+  /** Opened from a notification: highlight this request */
+  focusRequestId?: string;
+}) {
   const [requests, setRequests] = useState<BorrowRequestView[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<"incoming" | "outgoing">("incoming");
+  const [tab, setTab] = useState<"incoming" | "outgoing">(initialTab ?? "incoming");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [responding, setResponding] = useState<{ request: BorrowRequestView; accept: boolean } | null>(null);
@@ -119,12 +132,25 @@ export default function BorrowRequests({ room, members }: { room: Room; members:
             const other = byId.get(tab === "incoming" ? r.requester_id : r.owner_id);
             const otherName = other?.display_name ?? "Former member";
             return (
-              <li key={r.id} className="borrow-row panel">
+              <li
+                key={r.id}
+                className={`borrow-row panel${r.id === focusRequestId ? " borrow-row-focus" : ""}`}
+                ref={r.id === focusRequestId ? (el) => el?.scrollIntoView({ block: "nearest" }) : undefined}
+                data-request-id={r.id}
+              >
                 <div className="borrow-thumb">
                   {r.item?.image_url ? <img src={r.item.image_url} alt="" /> : <Repeat2 size={18} />}
                 </div>
                 <div className="borrow-info">
-                  <div className="borrow-item-name">{r.item?.name ?? "Item no longer shared"}</div>
+                  <div className="borrow-item-name">
+                    {r.item?.name ?? "Item no longer shared"}
+                    {/* Incoming requests are for your items; outgoing ones name the owner */}
+                    {itemReference(r.item?.item_number, tab === "incoming" ? null : otherName) && (
+                      <span className="item-number borrow-item-number">
+                        {itemReference(r.item?.item_number, tab === "incoming" ? null : otherName)}
+                      </span>
+                    )}
+                  </div>
                   <div className="borrow-party">
                     <MemberAvatar name={otherName} url={other?.avatar_url} size={20} />
                     {tab === "incoming" ? `${otherName} asked to borrow` : `Owned by ${otherName}`}
@@ -173,7 +199,11 @@ export default function BorrowRequests({ room, members }: { room: Room; members:
       {responding && (
         <RespondModal
           accept={responding.accept}
-          itemName={responding.request.item?.name ?? "this item"}
+          itemName={
+            responding.request.item
+              ? [responding.request.item.name, formatItemNumber(responding.request.item.item_number)].filter(Boolean).join(" ")
+              : "this item"
+          }
           requesterName={byId.get(responding.request.requester_id)?.display_name ?? "The requester"}
           onCancel={() => setResponding(null)}
           onConfirm={async (reply) => {

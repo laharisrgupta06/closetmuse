@@ -10,6 +10,7 @@ import type { BorrowRequest, WardrobeItem } from "../types";
 import { CATEGORY_DEFINITIONS, getNormalizedCategory } from "../utils/category";
 import { fetchItemRooms, unshareItem } from "../services/roomService";
 import { cancelBorrow, fetchMyRequestsForItem, requestBorrow } from "../services/borrowService";
+import { formatItemNumber } from "../utils/numbering";
 
 interface ItemDetailModalProps {
   item: WardrobeItem;
@@ -190,6 +191,12 @@ export default function ItemDetailModal({
           <div className="eyebrow">{categoryLabel}{item.subcategory ? ` · ${item.subcategory}` : ""}</div>
           <h2 className="item-detail-title">{item.name}</h2>
           <div className="item-detail-owner">
+            {formatItemNumber(item.item_number) && (
+              <span className="item-number" id="item-detail-number">
+                Item {formatItemNumber(item.item_number)}
+              </span>
+            )}
+            {formatItemNumber(item.item_number) && " · "}
             {isOwner ? "Your item" : `Shared by ${ownerName ?? "a member"}`}
           </div>
 

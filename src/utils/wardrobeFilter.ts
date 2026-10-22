@@ -3,6 +3,7 @@
 // independent filters that combine with AND.
 import { CATEGORY_DEFINITIONS, getNormalizedCategory, type GarmentCategory } from "./category.ts";
 import { normalizeAesthetic, resolveItemType, typesFor, type Aesthetic, type ItemType } from "./taxonomy.ts";
+import { formatItemNumber, parseItemNumber } from "./numbering.ts";
 
 export interface FilterableItem {
   name: string;
@@ -13,6 +14,7 @@ export interface FilterableItem {
   color?: string | null;
   material?: string | null;
   occasion?: string | null;
+  item_number?: number | null;
 }
 
 export interface WardrobeFilter {
@@ -76,6 +78,10 @@ export function matchesFilter(item: FilterableItem, filter: WardrobeFilter, face
   if (active(filter.tradition) && facets.tradition?.toLowerCase() !== filter.tradition!.toLowerCase()) return false;
   if (active(filter.occasion) && (item.occasion ?? "").toLowerCase() !== filter.occasion!.toLowerCase()) return false;
 
+  // "#008" or "item 8" means exactly that item
+  const wanted = parseItemNumber(filter.query ?? "");
+  if (wanted !== null) return item.item_number === wanted;
+
   const words = (filter.query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
   if (words.length) {
     const haystack = [
@@ -84,6 +90,7 @@ export function matchesFilter(item: FilterableItem, filter: WardrobeFilter, face
       item.color,
       item.material,
       item.occasion,
+      formatItemNumber(item.item_number),
       facets.category,
       facets.type.label,
       facets.aesthetic,
@@ -131,13 +138,14 @@ export function aestheticCounts(items: FilterableItem[]): Record<Aesthetic | "un
   return out;
 }
 
-export type WardrobeSort = "newest" | "oldest" | "name" | "category";
+export type WardrobeSort = "newest" | "oldest" | "name" | "category" | "number";
 
 export const WARDROBE_SORTS: { value: WardrobeSort; label: string }[] = [
   { value: "newest", label: "Newest added" },
   { value: "oldest", label: "Oldest added" },
   { value: "name", label: "Name A–Z" },
   { value: "category", label: "Category" },
+  { value: "number", label: "Item number" },
 ];
 
 /** A sorted copy; ties keep a stable, predictable order (by name) */
@@ -147,6 +155,10 @@ export function sortWardrobe<T extends FilterableItem & { created_at?: string }>
   const byName = (a: T, b: T) => a.name.localeCompare(b.name);
   return [...items].sort((a, b) => {
     if (sort === "name") return byName(a, b);
+    if (sort === "number") {
+      // Items without a number (before migration 009) go last
+      return (a.item_number ?? Infinity) - (b.item_number ?? Infinity) || byName(a, b);
+    }
     if (sort === "category") {
       return order.indexOf(itemFacets(a).category) - order.indexOf(itemFacets(b).category) || byName(a, b);
     }

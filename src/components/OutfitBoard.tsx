@@ -6,6 +6,7 @@
  */
 import type { WardrobeItem } from "../types";
 import { getNormalizedCategory } from "../utils/category";
+import { formatItemNumber } from "../utils/numbering";
 
 export interface BoardPiece {
   item: WardrobeItem;
@@ -58,7 +59,10 @@ function Piece({ piece, slot }: { piece: BoardPiece; slot: string }) {
         )}
       </div>
       <figcaption>
-        <span className="outfit-piece-slot">{SLOT_LABELS[slot]}</span>
+        <span className="outfit-piece-slot">
+          {SLOT_LABELS[slot]}
+          {formatItemNumber(item.item_number) && <span className="item-number"> · {formatItemNumber(item.item_number)}</span>}
+        </span>
         <span className="outfit-piece-name" title={item.name}>{item.name}</span>
         {reason && (
           <span className="outfit-piece-reason" title={reason}>
