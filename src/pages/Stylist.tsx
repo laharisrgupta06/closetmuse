@@ -29,6 +29,7 @@ import {
   type SavedOutfit,
 } from "../services/outfitService";
 import "../App.css";
+import { formatOutfitNumber } from "../utils/numbering";
 
 const OCCASIONS: { value: GarmentOccasion; label: string }[] = [
   { value: "everyday", label: "Everyday" },
@@ -327,6 +328,11 @@ export default function Stylist() {
                                 marginBottom: 6,
                               }}
                             >
+                              {formatOutfitNumber(outfit.outfit_number) && (
+                                <span className="outfit-number" style={{ display: "block", marginBottom: 2 }}>
+                                  {formatOutfitNumber(outfit.outfit_number)}
+                                </span>
+                              )}
                               {outfit.name}
                             </div>
                             <div

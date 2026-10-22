@@ -1,120 +1,171 @@
+import { useState } from "react";
 import type { CSSProperties } from "react";
 
 /**
- * Decorative wardrobe scene behind the My Closet header: a warm wash, an
- * arched alcove with a rail of gold hangers (each swaying gently on its own
- * timing), and a small shelf of folded knits. Purely decorative: hidden from
- * assistive technology, never interactive, and kept clear of the title and
- * header buttons by the layout in App.css. Swaying stops when the user
- * prefers reduced motion.
+ * The wardrobe behind My Closet: a full-width cabinet (cornice, side pillars,
+ * plinth, lit back wall, brass rail, shelf) with gold hangers and garments,
+ * and two panelled doors that swing open once per browser session.
+ *
+ * Purely decorative: hidden from assistive technology, never interactive, and
+ * fixed behind the page so the user's clothes stay in front. Every hanger is
+ * its own element animated with CSS transforms (GPU-composited, no repaints);
+ * the doors use 3D transforms. With reduced motion the doors start open and
+ * nothing moves.
  */
 
-// One hanger, pivot at the top of the hook (0,0)
-function Hanger() {
+const SESSION_KEY = "closetmuse:wardrobe-opened";
+
+/** True the first time in this browser session; storage failures just skip the animation */
+function firstVisitThisSession(): boolean {
+  try {
+    if (sessionStorage.getItem(SESSION_KEY)) return false;
+    sessionStorage.setItem(SESSION_KEY, "1");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+type Garment = "blouse" | "dress" | "coat" | "shirt" | "none";
+
+interface HangerSpec {
+  /** Position along the rail, % of the cabinet width */
+  x: number;
+  /** Resting tilt, degrees */
+  tilt: number;
+  /** Sway either side of the tilt, degrees; the sign sets the starting direction */
+  amp: number;
+  /** Seconds for one swing */
+  duration: number;
+  garment: Garment;
+  /** Muted fabric colour */
+  fabric: string;
+  /** Hidden on narrower screens so the rail never looks crowded */
+  hideBelow?: 768 | 1100;
+}
+
+const HANGERS: HangerSpec[] = [
+  { x: 8, tilt: -2, amp: 2.4, duration: 5.6, garment: "coat", fabric: "#c6b6a2" },
+  { x: 17, tilt: 2, amp: -2.8, duration: 6.2, garment: "blouse", fabric: "#e6d3cb", hideBelow: 768 },
+  { x: 26, tilt: -1, amp: 3, duration: 5.9, garment: "none", fabric: "", hideBelow: 1100 },
+  { x: 35, tilt: 3, amp: -2.4, duration: 6.6, garment: "dress", fabric: "#c9b8a6" },
+  { x: 47, tilt: -2, amp: 2.6, duration: 6, garment: "shirt", fabric: "#d9dcd2", hideBelow: 1100 },
+  { x: 58, tilt: 1, amp: -3, duration: 5.7, garment: "blouse", fabric: "#ecdcc9" },
+  { x: 69, tilt: -3, amp: 2.4, duration: 6.4, garment: "none", fabric: "", hideBelow: 768 },
+  { x: 79, tilt: 2, amp: -2.6, duration: 6.1, garment: "dress", fabric: "#d8c3c0", hideBelow: 1100 },
+  { x: 90, tilt: -1, amp: 2.8, duration: 5.8, garment: "coat", fabric: "#b8aa9c" },
+];
+
+// Sleeves drawn behind the body, and seams/collars drawn on top (same viewBox)
+const SLEEVES: Partial<Record<Exclude<Garment, "none">, string>> = {
+  blouse: "M-50 66 L-69 104 L-58 110 L-44 86 Z M50 66 L69 104 L58 110 L44 86 Z",
+  shirt: "M-52 66 L-70 150 L-58 154 L-46 92 Z M52 66 L70 150 L58 154 L46 92 Z",
+  coat: "M-56 66 L-74 196 L-60 200 L-48 96 Z M56 66 L74 196 L60 200 L48 96 Z",
+};
+const DETAILS: Record<Exclude<Garment, "none">, string> = {
+  blouse: "M-16 68 Q0 86 16 68 M-40 150 Q0 156 40 150",
+  shirt: "M-14 68 L0 90 L14 68 M0 90 L0 168 M-3 108 h6 M-3 128 h6 M-3 148 h6",
+  dress: "M-46 108 Q0 116 46 108 M-22 112 L-34 222 M0 116 L0 228 M22 112 L34 222",
+  coat: "M-16 74 L-6 132 M16 74 L6 132 M-12 150 h4 M-12 176 h4",
+};
+
+// Garment silhouettes hanging from the shoulders of a hanger (viewBox -70 -8 140 238)
+const GARMENT_PATHS: Record<Exclude<Garment, "none">, string> = {
+  blouse: "M-52 66 Q-62 72 -64 96 L-60 150 Q0 160 60 150 L64 96 Q62 72 52 66 Q26 80 0 82 Q-26 80 -52 66 Z",
+  shirt: "M-54 66 Q-64 74 -64 100 L-62 170 Q0 178 62 170 L64 100 Q64 74 54 66 L14 78 L0 96 L-14 78 Z",
+  dress: "M-44 66 Q-52 76 -48 104 L-72 226 Q0 236 72 226 L48 104 Q52 76 44 66 Q22 80 0 82 Q-22 80 -44 66 Z",
+  coat: "M-58 66 Q-70 74 -68 104 L-64 222 Q0 230 64 222 L68 104 Q70 74 58 66 L16 76 L4 222 L-4 222 L-16 76 Z",
+};
+
+function Hanger({ spec, index }: { spec: HangerSpec; index: number }) {
+  const style = {
+    left: `${spec.x}%`,
+    "--tilt": `${spec.tilt}deg`,
+    "--amp": `${spec.amp}deg`,
+    animationDuration: `${spec.duration}s`,
+    animationDelay: `${-index * 0.5}s`, // staggered, already in motion on load
+  } as CSSProperties;
   return (
-    <>
-      <path d="M0 24 L0 10 C0 0 12 -3 13 5 C13.6 10 8 12 6 9" />
-      <circle cx="0" cy="26" r="2.4" />
-      <path d="M-2 28 L-58 66 Q-65 71 -56 72 L56 72 Q65 71 58 66 L2 28" />
-    </>
+    <div className={`wardrobe-hanger${spec.hideBelow ? ` hide-below-${spec.hideBelow}` : ""}`} style={style}>
+      <svg viewBox="-70 -8 140 238" focusable="false">
+        <defs>
+          <linearGradient id={`wh-fabric-${index}`} x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stopColor={spec.fabric || "#000"} stopOpacity="1" />
+            <stop offset="1" stopColor={spec.fabric || "#000"} stopOpacity="0.82" />
+          </linearGradient>
+        </defs>
+        {spec.garment !== "none" && (
+          <>
+            {SLEEVES[spec.garment] && <path d={SLEEVES[spec.garment]} fill={spec.fabric} opacity="0.85" />}
+            <path d={GARMENT_PATHS[spec.garment]} fill={`url(#wh-fabric-${index})`} />
+            {/* soft fold shadow, then seams and collar */}
+            <path d={GARMENT_PATHS[spec.garment]} fill="url(#wardrobe-fold)" />
+            <path d={DETAILS[spec.garment]} fill="none" stroke="#3b2a1c" strokeOpacity="0.12" strokeWidth="1.6" strokeLinecap="round" />
+          </>
+        )}
+        <g fill="none" stroke="url(#wardrobe-gold)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M0 24 L0 10 C0 0 12 -3 13 5 C13.6 10 8 12 6 9" />
+          <path d="M-2 28 L-58 64 Q-65 69 -56 70 L56 70 Q65 69 58 64 L2 28" />
+        </g>
+      </svg>
+    </div>
   );
 }
 
-// Soft garment silhouettes hanging from a hanger's shoulders (y ≈ 66–72)
-const BLOUSE = "M-54 70 Q-60 74 -62 92 L-66 150 L66 150 L62 92 Q60 74 54 70 Q30 80 0 82 Q-30 80 -54 70 Z";
-const DRESS = "M-46 70 Q-52 76 -50 96 L-74 150 L74 150 L50 96 Q52 76 46 70 Q24 82 0 84 Q-24 82 -46 70 Z";
-
-interface HangerSpec {
-  x: number;
-  tilt: number;
-  /** Sway amplitude; the sign sets the starting direction */
-  amp: number;
-  duration: number;
-  garment?: { d: string; fill: string };
-}
-
-// Tilts vary in direction and size; sway is ±1.5–2° with 0.5 s staggered starts
-const HANGERS: HangerSpec[] = [
-  { x: 120, tilt: -8, amp: 1.8, duration: 4.6 },
-  { x: 300, tilt: 6, amp: -1.6, duration: 5.2, garment: { d: BLOUSE, fill: "url(#cb-blush)" } },
-  { x: 480, tilt: -4, amp: 2, duration: 4.9 },
-  { x: 660, tilt: 9, amp: -1.7, duration: 5.5, garment: { d: DRESS, fill: "url(#cb-ivory)" } },
-  { x: 830, tilt: -6, amp: 1.5, duration: 5 },
-];
-
-const RAIL_Y = 44;
-
 export default function ClosetBackdrop() {
-  return (
-    <div className="closet-backdrop" aria-hidden="true">
-      <div className="closet-backdrop-wash" />
+  // Decided once per mount: open with an animation on the first visit of the session
+  const [animateDoors] = useState(firstVisitThisSession);
 
-      <svg className="closet-backdrop-alcove" viewBox="0 0 950 150" preserveAspectRatio="xMidYMin meet" focusable="false">
+  return (
+    <div className={`wardrobe-scene${animateDoors ? " doors-animate" : ""}`} aria-hidden="true">
+      {/* Shared paint servers for all hangers */}
+      <svg className="wardrobe-defs" width="0" height="0" focusable="false">
         <defs>
-          <linearGradient id="cb-gold" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0" stopColor="#f1deaa" />
-            <stop offset="0.45" stopColor="#c9a35a" />
-            <stop offset="0.7" stopColor="#a8823d" />
-            <stop offset="1" stopColor="#e4cb8d" />
+          <linearGradient id="wardrobe-gold" x1="0" y1="0" x2="1" y2="1" gradientUnits="objectBoundingBox">
+            <stop offset="0" stopColor="#ecd59a" />
+            <stop offset="0.5" stopColor="#c49a4e" />
+            <stop offset="1" stopColor="#e2c27d" />
           </linearGradient>
-          <linearGradient id="cb-panel" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stopColor="#efe5d3" />
-            <stop offset="1" stopColor="#f6f1e8" stopOpacity="0" />
-          </linearGradient>
-          <linearGradient id="cb-blush" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stopColor="#ead7cf" />
-            <stop offset="1" stopColor="#ead7cf" stopOpacity="0" />
-          </linearGradient>
-          <linearGradient id="cb-ivory" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stopColor="#e9dfcb" />
-            <stop offset="1" stopColor="#e9dfcb" stopOpacity="0" />
+          <linearGradient id="wardrobe-fold" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stopColor="#3b2a1c" stopOpacity="0.16" />
+            <stop offset="0.35" stopColor="#3b2a1c" stopOpacity="0" />
+            <stop offset="0.7" stopColor="#3b2a1c" stopOpacity="0.04" />
+            <stop offset="1" stopColor="#3b2a1c" stopOpacity="0.18" />
           </linearGradient>
         </defs>
-
-        {/* Arched alcove: back panel and moulding */}
-        <path d="M30 150 L30 48 Q30 10 70 10 L880 10 Q920 10 920 48 L920 150 Z" fill="url(#cb-panel)" />
-        <path d="M30 150 L30 48 Q30 10 70 10 L880 10 Q920 10 920 48 L920 150" fill="none" stroke="#e2d2ad" strokeWidth="1.4" />
-        <path d="M46 150 L46 54 Q46 24 78 24 L872 24 Q904 24 904 54 L904 150" fill="none" stroke="#ebdfc4" strokeWidth="1" />
-
-        {/* Rail with end brackets */}
-        <line x1="54" y1={RAIL_Y + 2} x2="896" y2={RAIL_Y + 2} stroke="#c9a35a" strokeWidth="2.2" strokeLinecap="round" />
-        <rect x="50" y={RAIL_Y - 3} width="6" height="10" rx="2" fill="#d8bf87" />
-        <rect x="894" y={RAIL_Y - 3} width="6" height="10" rx="2" fill="#d8bf87" />
-
-        {HANGERS.map((h, i) => (
-          <g key={h.x} transform={`translate(${h.x} ${RAIL_Y}) rotate(${h.tilt})`}>
-            <g
-              className="closet-hanger"
-              style={
-                {
-                  "--amp": `${h.amp}deg`,
-                  animationDuration: `${h.duration}s`,
-                  animationDelay: `${i * 0.5}s`,
-                } as CSSProperties
-              }
-            >
-              {h.garment && <path d={h.garment.d} fill={h.garment.fill} />}
-              <g fill="none" stroke="url(#cb-gold)" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
-                <Hanger />
-              </g>
-            </g>
-          </g>
-        ))}
       </svg>
 
-      <svg className="closet-backdrop-shelf" viewBox="0 0 230 64" focusable="false">
-        {/* Hat box */}
-        <ellipse cx="44" cy="30" rx="30" ry="6" fill="#efe6d4" stroke="#e2d2ad" strokeWidth="1" />
-        <path d="M14 30 L14 52 Q44 60 74 52 L74 30" fill="#f2ebdd" stroke="#e2d2ad" strokeWidth="1" />
-        <path d="M14 38 Q44 46 74 38" fill="none" stroke="#e7d7b4" strokeWidth="1" />
-        {/* Folded knits */}
-        <rect x="104" y="44" width="92" height="12" rx="4" fill="#eadfd0" stroke="#e2d2ad" strokeWidth="0.8" />
-        <rect x="108" y="32" width="86" height="12" rx="4" fill="#ede6d8" stroke="#e2d2ad" strokeWidth="0.8" />
-        <rect x="112" y="21" width="80" height="11" rx="4" fill="#ecdcd3" stroke="#e2d2ad" strokeWidth="0.8" />
-        <path d="M150 21 L150 56" stroke="#e5d6bd" strokeWidth="0.8" />
-        {/* Shelf board */}
-        <rect x="0" y="56" width="230" height="5" rx="2" fill="#e8dcc2" />
-      </svg>
+      <div className="wardrobe-interior">
+        <div className="wardrobe-rail" />
+        <div className="wardrobe-hangers">
+          {HANGERS.map((h, i) => (
+            <Hanger key={h.x} spec={h} index={i} />
+          ))}
+        </div>
+        <div className="wardrobe-shelf">
+          <span className="wardrobe-stack wardrobe-stack--a" />
+          <span className="wardrobe-stack wardrobe-stack--b" />
+          <span className="wardrobe-stack wardrobe-stack--c" />
+        </div>
+      </div>
+
+      <div className="wardrobe-frame" />
+
+      <div className="wardrobe-doors">
+        <div className="wardrobe-door wardrobe-door--left">
+          <span className="wardrobe-door-panel" />
+          <span className="wardrobe-door-panel" />
+          <span className="wardrobe-handle" />
+        </div>
+        <div className="wardrobe-door wardrobe-door--right">
+          <span className="wardrobe-door-panel" />
+          <span className="wardrobe-door-panel" />
+          <span className="wardrobe-handle" />
+        </div>
+      </div>
+
+      {/* Keeps the user's clothes, text and controls dominant */}
+      <div className="wardrobe-veil" />
     </div>
   );
 }

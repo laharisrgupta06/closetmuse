@@ -2,6 +2,7 @@ import { Plus } from "lucide-react";
 import type { GarmentCategory } from "../types";
 
 import { getNormalizedCategory } from "../utils/category";
+import { formatItemNumber } from "../utils/numbering";
 
 interface OutfitSlotProps {
   category: GarmentCategory;
@@ -11,6 +12,7 @@ interface OutfitSlotProps {
     category: string;
     subcategory?: string;
     image_url?: string;
+    item_number?: number | null;
   };
   onAdd?: () => void;
   onRemove?: () => void;
@@ -43,8 +45,11 @@ export default function OutfitSlot({
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="slot-filled-name truncate">{filledItem.name}</div>
-          <div className="slot-filled-meta" style={{ textTransform: "capitalize" }}>
-            {displayCat}
+          <div className="slot-filled-meta">
+            {formatItemNumber(filledItem.item_number) && (
+              <span className="item-number">{formatItemNumber(filledItem.item_number)} · </span>
+            )}
+            <span style={{ textTransform: "capitalize" }}>{displayCat}</span>
           </div>
         </div>
       </div>

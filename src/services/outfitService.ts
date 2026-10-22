@@ -20,6 +20,8 @@ export interface SavedOutfit {
   styling_notes?: string;
   items: WardrobeItem[];
   item_ids: string[];
+  /** Permanent per-user number shown as "Outfit #001" (migration 009); none until saved */
+  outfit_number?: number | null;
   created_at: string;
 }
 
@@ -123,6 +125,7 @@ export async function saveOutfit(
         styling_notes: dbData.styling_notes || "",
         items: params.items,
         item_ids: dbData.item_ids || itemIds,
+        outfit_number: dbData.outfit_number ?? null,
         created_at: dbData.created_at,
       };
     }
@@ -228,6 +231,7 @@ export async function fetchSavedOutfits(): Promise<SavedOutfit[]> {
             styling_notes: row.styling_notes || "",
             items: hydrateItems(row.item_ids || []),
             item_ids: row.item_ids || [],
+            outfit_number: row.outfit_number ?? null,
             created_at: row.created_at,
           });
         }

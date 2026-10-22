@@ -7,6 +7,7 @@ import { X, Sparkles, Trash2, Calendar, Tag } from "lucide-react";
 import type { SavedOutfit } from "../services/outfitService";
 import { getNormalizedCategory } from "../utils/category";
 import "../App.css";
+import { formatItemNumber, formatOutfitNumber } from "../utils/numbering";
 
 interface SavedOutfitModalProps {
   outfit: SavedOutfit | null;
@@ -82,8 +83,10 @@ export default function SavedOutfitModal({
           }}
         >
           <div>
-            <div className="eyebrow" style={{ marginBottom: 4 }}>
-              Saved Outfit Details
+            <div className="eyebrow" style={{ marginBottom: 4 }} id="saved-outfit-number">
+              {formatOutfitNumber(outfit.outfit_number)
+                ? `${formatOutfitNumber(outfit.outfit_number)} · Saved outfit`
+                : "Saved Outfit Details"}
             </div>
             <h2
               id="saved-outfit-modal-title"
@@ -256,6 +259,9 @@ export default function SavedOutfitModal({
                       }}
                       title={item.name}
                     >
+                      {formatItemNumber(item.item_number) && (
+                        <span className="item-number">{formatItemNumber(item.item_number)} </span>
+                      )}
                       {item.name}
                     </div>
                     <div

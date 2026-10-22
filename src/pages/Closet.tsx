@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, useDeferredValue } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Search,
@@ -35,6 +35,7 @@ import { itemFacets, isRefined, matchesFilter, NO_REFINE, sortWardrobe, WARDROBE
 import type { RefineValue, WardrobeSort } from "../utils/wardrobeFilter";
 import RefineFilters from "../components/taxonomy/RefineFilters";
 import "../App.css";
+import { formatItemNumber, formatOutfitNumber } from "../utils/numbering";
 
 const CATEGORY_FILTERS: { value: GarmentCategory | "all"; label: string }[] = [
   { value: "all", label: "All" },
@@ -87,6 +88,9 @@ export default function Closet() {
 
   // Navigation & filtering state
   const [activeTab, setActiveTab] = useState<ActiveTab>("closet");
+  // The tab underline follows activeTab at once; the panel below follows a
+  // frame later, so a click paints immediately instead of waiting on the grid
+  const shownTab = useDeferredValue(activeTab);
   const [activeFilter, setActiveFilter] = useState<GarmentCategory | "all">("all");
   const [refine, setRefine] = useState<RefineValue>(NO_REFINE);
   const [sort, setSort] = useState<WardrobeSort>("newest");
@@ -235,7 +239,9 @@ export default function Closet() {
       setSaveState("success");
       setFeedbackMsg({
         type: "success",
-        text: `Outfit "${saved.name}" saved successfully!`,
+        text: formatOutfitNumber(saved.outfit_number)
+          ? `Outfit "${saved.name}" saved as ${formatOutfitNumber(saved.outfit_number)}.`
+          : `Outfit "${saved.name}" saved successfully!`,
       });
 
       setTimeout(() => {
@@ -263,7 +269,7 @@ export default function Closet() {
     setActiveTab("outfits"); // Switch to Outfit Builder so user can immediately view/edit
     setFeedbackMsg({
       type: "success",
-      text: `Loaded "${outfit.name}" into Outfit Builder.`,
+      text: `Loaded "${outfit.name}"${formatOutfitNumber(outfit.outfit_number) ? ` (${formatOutfitNumber(outfit.outfit_number)})` : ""} into Outfit Builder.`,
     });
     setTimeout(() => setFeedbackMsg(null), 3000);
   };
@@ -374,7 +380,7 @@ export default function Closet() {
           </div>
 
           {/* ── TAB 1: WARDROBE ── */}
-          {activeTab === "closet" && (
+          {shownTab === "closet" && (
             <>
               {/* Filter bar */}
               <div className="filter-bar">
@@ -520,7 +526,7 @@ export default function Closet() {
           )}
 
           {/* ── TAB 2: OUTFIT BUILDER (SPACIOUS 2-COLUMN LAYOUT) ── */}
-          {activeTab === "outfits" && (
+          {shownTab === "outfits" && (
             <div className="outfit-builder-grid">
               {/* Column 1: Wardrobe Item Selection Browser */}
               <div className="builder-col-wardrobe">
@@ -797,7 +803,7 @@ export default function Closet() {
           )}
 
           {/* ── TAB 3: SAVED OUTFITS GALLERY ── */}
-          {activeTab === "saved_outfits" && (
+          {shownTab === "saved_outfits" && (
             <div>
               <div
                 style={{
@@ -892,6 +898,9 @@ export default function Closet() {
                       >
                         <div className="saved-outfit-header">
                           <div>
+                            {formatOutfitNumber(outfit.outfit_number) && (
+                              <div className="outfit-number">{formatOutfitNumber(outfit.outfit_number)}</div>
+                            )}
                             <div className="saved-outfit-title">{outfit.name}</div>
                             <div style={{ fontSize: 12, color: "var(--brown-muted)", marginTop: 2 }}>
                               {validItems.length} {validItems.length === 1 ? "item" : "items"}
@@ -911,7 +920,7 @@ export default function Closet() {
                                   key={it.id || idx}
                                   src={it.image_url}
                                   alt={it.name}
-                                  title={it.name}
+                                  title={[formatItemNumber(it.item_number), it.name].filter(Boolean).join(" ")}
                                   className="saved-outfit-thumb"
                                   onError={(e) => {
                                     e.currentTarget.style.display = "none";
@@ -920,7 +929,7 @@ export default function Closet() {
                               ) : (
                                 <div
                                   key={it.id || idx}
-                                  title={it.name}
+                                  title={[formatItemNumber(it.item_number), it.name].filter(Boolean).join(" ")}
                                   className="saved-outfit-thumb-placeholder"
                                 >
                                   {getNormalizedCategory(it).slice(0, 3)}

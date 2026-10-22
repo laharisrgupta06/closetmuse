@@ -192,7 +192,12 @@ export default function MemberWardrobe({ room, member, onChanged }: MemberWardro
       ) : (
         <div className="item-grid" id="member-items">
           {visible.map(({ item }) => (
-            <WardrobeCard key={item.id} item={item} onOpen={setOpenItem} />
+            <WardrobeCard
+              key={item.id}
+              item={item}
+              onOpen={setOpenItem}
+              ownerName={member.is_me ? undefined : member.display_name}
+            />
           ))}
         </div>
       )}

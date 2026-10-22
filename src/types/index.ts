@@ -43,6 +43,8 @@ export interface WardrobeItem {
   subcategory?: string;
   /** Optional design tradition, mainly jewellery (e.g. "Kundan"); needs migration 008 */
   design_tradition?: string | null;
+  /** Permanent per-user number shown as #001, assigned by the database (migration 009) */
+  item_number?: number | null;
   color: string;
   material?: string;
   pattern?: string;
