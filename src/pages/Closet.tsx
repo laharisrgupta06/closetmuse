@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, useDeferredValue } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Search,
@@ -88,6 +88,9 @@ export default function Closet() {
 
   // Navigation & filtering state
   const [activeTab, setActiveTab] = useState<ActiveTab>("closet");
+  // The tab underline follows activeTab at once; the panel below follows a
+  // frame later, so a click paints immediately instead of waiting on the grid
+  const shownTab = useDeferredValue(activeTab);
   const [activeFilter, setActiveFilter] = useState<GarmentCategory | "all">("all");
   const [refine, setRefine] = useState<RefineValue>(NO_REFINE);
   const [sort, setSort] = useState<WardrobeSort>("newest");
@@ -377,7 +380,7 @@ export default function Closet() {
           </div>
 
           {/* ── TAB 1: WARDROBE ── */}
-          {activeTab === "closet" && (
+          {shownTab === "closet" && (
             <>
               {/* Filter bar */}
               <div className="filter-bar">
@@ -523,7 +526,7 @@ export default function Closet() {
           )}
 
           {/* ── TAB 2: OUTFIT BUILDER (SPACIOUS 2-COLUMN LAYOUT) ── */}
-          {activeTab === "outfits" && (
+          {shownTab === "outfits" && (
             <div className="outfit-builder-grid">
               {/* Column 1: Wardrobe Item Selection Browser */}
               <div className="builder-col-wardrobe">
@@ -800,7 +803,7 @@ export default function Closet() {
           )}
 
           {/* ── TAB 3: SAVED OUTFITS GALLERY ── */}
-          {activeTab === "saved_outfits" && (
+          {shownTab === "saved_outfits" && (
             <div>
               <div
                 style={{

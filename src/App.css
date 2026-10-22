@@ -2670,96 +2670,323 @@
   }
 }
 
-/* ─── My Closet: wardrobe backdrop (ClosetBackdrop.tsx) ──────── */
-/* Faint and behind everything; laid out so the alcove sits in the open band
-   between the title and the buttons, and the shelf sits above the buttons. */
-.closet-backdrop {
-  position: absolute;
+/* ─── My Closet: the wardrobe (ClosetBackdrop.tsx) ───────────── */
+/* A full-width cabinet fixed behind the page. Warm, muted wood; the veil on
+   top keeps the user's clothes, text and controls dominant. Hangers and doors
+   move with transforms only (GPU-composited, no per-frame repaints). */
+.wardrobe-scene {
+  --wood-light: #b99d80;
+  --wood: #9e8064;
+  --wood-dark: #775d45;
+  --wall-top: #ebe0d0;
+  --wall: #e2d4c1;
+  --pillar: clamp(14px, 3.2vw, 52px);
+  --rail-top: 58px;
+  --hanger-w: clamp(64px, 7.2vw, 124px);
+  /* How far the open doors rest. With the perspective proportional to the
+     width, a slice of about 3% of the screen stays visible at each edge */
+  --door-open: 71deg;
+  position: fixed;
+  top: 64px;
+  left: 0;
+  right: 0;
+  bottom: 0;
   z-index: -1;
-  inset: 0 0 auto 0;
-  height: 150px;
-  pointer-events: none;
   overflow: hidden;
+  pointer-events: none;
+  contain: strict;
+  will-change: transform;
 }
 
-.closet-backdrop-wash {
+.wardrobe-defs {
+  position: absolute;
+  width: 0;
+  height: 0;
+}
+
+/* Back wall: light from above, fine vertical grain */
+.wardrobe-interior {
   position: absolute;
   inset: 0;
-  /* A soft light that fades out on every side: no visible box edges */
-  background: radial-gradient(ellipse 50% 85% at 62% 0%, rgba(239, 229, 211, 0.6), rgba(239, 229, 211, 0) 72%);
+  background:
+    radial-gradient(ellipse 72% 58% at 50% 0%, rgba(255, 247, 232, 0.65), rgba(255, 247, 232, 0) 70%),
+    repeating-linear-gradient(90deg, rgba(110, 80, 50, 0.04) 0 1px, transparent 1px 8px, rgba(110, 80, 50, 0.025) 8px 10px, transparent 10px 26px),
+    linear-gradient(to bottom, var(--wall-top), var(--wall));
 }
 
-.closet-backdrop-alcove {
+.wardrobe-rail {
   position: absolute;
-  top: 8px;
-  right: 290px;
-  width: clamp(0px, calc(100% - 740px), 560px);
-  height: auto;
-  aspect-ratio: 950 / 150;
-  opacity: 0.42;
-  /* Lines and garments dissolve towards the bottom instead of stopping */
-  -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent);
-  mask-image: linear-gradient(to bottom, #000 55%, transparent);
+  top: var(--rail-top);
+  left: calc(var(--pillar) + 1.5%);
+  right: calc(var(--pillar) + 1.5%);
+  height: 7px;
+  border-radius: 4px;
+  background: linear-gradient(to bottom, #f1ddaa, #c79d52 55%, #9a7539);
+  box-shadow: 0 4px 7px rgba(80, 55, 25, 0.22);
 }
 
-.closet-backdrop-shelf {
+.wardrobe-rail::before,
+.wardrobe-rail::after {
+  content: "";
   position: absolute;
-  top: 4px;
-  right: 40px;
-  width: 200px;
-  height: auto;
-  aspect-ratio: 230 / 64;
-  opacity: 0.6;
+  top: -22px;
+  width: 9px;
+  height: 30px;
+  border-radius: 3px;
+  background: linear-gradient(to right, #9a7539, #d8b46c, #9a7539);
 }
 
-/* Each hanger sways a few degrees about its hook, on its own timing */
-.closet-hanger {
-  transform-box: fill-box;
-  transform-origin: 50% 0;
-  animation-name: hanger-sway;
+.wardrobe-rail::before {
+  left: 2px;
+}
+
+.wardrobe-rail::after {
+  right: 2px;
+}
+
+.wardrobe-hangers {
+  position: absolute;
+  top: calc(var(--rail-top) - 6px);
+  left: calc(var(--pillar) + 1.5%);
+  right: calc(var(--pillar) + 1.5%);
+  height: 0;
+}
+
+/* Each hanger swings about its hook, on its own timing */
+.wardrobe-hanger {
+  position: absolute;
+  top: 0;
+  width: var(--hanger-w);
+  aspect-ratio: 140 / 238;
+  margin-left: calc(var(--hanger-w) / -2);
+  transform: rotate(var(--tilt));
+  transform-origin: 50% 4%;
+  animation-name: wardrobe-sway;
   animation-timing-function: ease-in-out;
   animation-iteration-count: infinite;
   animation-direction: alternate;
-  animation-fill-mode: both;
+  will-change: transform;
 }
 
-@keyframes hanger-sway {
+.wardrobe-hanger svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  filter: drop-shadow(0 8px 10px rgba(70, 45, 20, 0.16));
+}
+
+@keyframes wardrobe-sway {
   from {
-    transform: rotate(calc(var(--amp) * -1));
+    transform: rotate(calc(var(--tilt) - var(--amp)));
   }
   to {
-    transform: rotate(var(--amp));
+    transform: rotate(calc(var(--tilt) + var(--amp)));
   }
+}
+
+/* A low shelf with folded knits */
+.wardrobe-shelf {
+  position: absolute;
+  left: calc(var(--pillar) + 1.5%);
+  right: calc(var(--pillar) + 1.5%);
+  bottom: 13%;
+  height: 12px;
+  border-radius: 2px;
+  background: linear-gradient(to bottom, var(--wood-light), var(--wood) 60%, var(--wood-dark));
+  box-shadow: 0 8px 14px rgba(70, 45, 20, 0.18);
+}
+
+.wardrobe-stack {
+  position: absolute;
+  bottom: 12px;
+  width: clamp(70px, 9vw, 150px);
+  height: clamp(26px, 3.4vw, 54px);
+  border-radius: 6px 6px 3px 3px;
+  box-shadow: 0 2px 4px rgba(70, 45, 20, 0.12);
+}
+
+.wardrobe-stack--a {
+  left: 9%;
+  background: repeating-linear-gradient(to bottom, #e8d9c9 0 9px, #d9c7b3 9px 10px);
+}
+
+.wardrobe-stack--b {
+  left: 46%;
+  background: repeating-linear-gradient(to bottom, #d7dbd0 0 9px, #c6cbbf 9px 10px);
+}
+
+.wardrobe-stack--c {
+  right: 9%;
+  background: repeating-linear-gradient(to bottom, #e9d6d0 0 9px, #d9c2bb 9px 10px);
+}
+
+/* Cornice, side pillars and plinth, with soft depth inside the cabinet */
+.wardrobe-frame {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(to bottom, var(--wood-light), var(--wood) 55%, var(--wood-dark)) top / 100% 18px no-repeat,
+    linear-gradient(to top, var(--wood-dark), var(--wood) 60%, var(--wood-light)) bottom / 100% 22px no-repeat,
+    linear-gradient(to right, var(--wood-dark), var(--wood) 30%, var(--wood-light) 70%, var(--wood)) left / var(--pillar) 100% no-repeat,
+    linear-gradient(to left, var(--wood-dark), var(--wood) 30%, var(--wood-light) 70%, var(--wood)) right / var(--pillar) 100% no-repeat;
+  box-shadow:
+    inset 0 30px 30px -22px rgba(60, 40, 20, 0.28),
+    inset calc(var(--pillar) + 24px) 0 34px -24px rgba(60, 40, 20, 0.2),
+    inset calc(-1 * var(--pillar) - 24px) 0 34px -24px rgba(60, 40, 20, 0.2);
+}
+
+/* Doors: open (swung towards the viewer) at rest; on the first visit of a
+   session they start closed and swing open once */
+.wardrobe-doors {
+  position: absolute;
+  inset: 0;
+  perspective: 166vw;
+  perspective-origin: 50% 35%;
+}
+
+.wardrobe-door {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 50%;
+  background:
+    repeating-linear-gradient(90deg, rgba(60, 40, 20, 0.05) 0 1px, transparent 1px 9px, rgba(255, 240, 220, 0.04) 9px 11px, transparent 11px 24px),
+    linear-gradient(to right, var(--wood), var(--wood-light) 50%, var(--wood));
+  box-shadow: inset 0 0 0 1px rgba(60, 40, 20, 0.25), inset 0 0 40px rgba(60, 40, 20, 0.18);
+  backface-visibility: hidden;
+  will-change: transform;
+}
+
+.wardrobe-door--left {
+  left: 0;
+  transform-origin: left center;
+  transform: rotateY(calc(-1 * var(--door-open)));
+}
+
+.wardrobe-door--right {
+  right: 0;
+  transform-origin: right center;
+  transform: rotateY(var(--door-open));
+}
+
+.wardrobe-door-panel {
+  position: absolute;
+  left: 14%;
+  right: 14%;
+  border-radius: 4px;
+  box-shadow:
+    inset 0 0 0 1px rgba(60, 40, 20, 0.22),
+    inset 3px 3px 6px rgba(255, 240, 220, 0.22),
+    inset -3px -3px 8px rgba(60, 40, 20, 0.2);
+}
+
+.wardrobe-door-panel:first-child {
+  top: 7%;
+  height: 40%;
+}
+
+.wardrobe-door-panel:nth-child(2) {
+  bottom: 7%;
+  height: 40%;
+}
+
+.wardrobe-handle {
+  position: absolute;
+  top: 46%;
+  width: 7px;
+  height: 64px;
+  border-radius: 4px;
+  background: linear-gradient(to right, #9a7539, #f0d9a2, #b48a43);
+  box-shadow: 0 3px 6px rgba(50, 30, 10, 0.3);
+}
+
+.wardrobe-door--left .wardrobe-handle {
+  right: 5%;
+}
+
+.wardrobe-door--right .wardrobe-handle {
+  left: 5%;
+}
+
+.doors-animate .wardrobe-door--left {
+  animation: wardrobe-door-left 1.7s cubic-bezier(0.45, 0.05, 0.25, 1) 0.2s both;
+}
+
+.doors-animate .wardrobe-door--right {
+  animation: wardrobe-door-right 1.7s cubic-bezier(0.45, 0.05, 0.25, 1) 0.2s both;
+}
+
+@keyframes wardrobe-door-left {
+  from {
+    transform: rotateY(0deg);
+  }
+  to {
+    transform: rotateY(calc(-1 * var(--door-open)));
+  }
+}
+
+@keyframes wardrobe-door-right {
+  from {
+    transform: rotateY(0deg);
+  }
+  to {
+    transform: rotateY(var(--door-open));
+  }
+}
+
+/* Keeps the foreground dominant: the top of the wardrobe stays atmospheric,
+   the area behind filters and clothing cards is calm */
+.wardrobe-veil {
+  position: absolute;
+  inset: 0;
+  background:
+    /* a soft wash behind the page eyebrow and title */
+    radial-gradient(ellipse min(460px, 46vw) 170px at min(240px, 24vw) 90px, rgba(249, 247, 244, 0.78), rgba(249, 247, 244, 0) 78%),
+    /* the garments fade out before the tabs and filters begin */
+    linear-gradient(to bottom, rgba(249, 247, 244, 0.28) 0, rgba(249, 247, 244, 0.6) 150px, rgba(249, 247, 244, 0.85) 240px, rgba(249, 247, 244, 0.85) 100%);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .closet-hanger {
+  .wardrobe-hanger,
+  .doors-animate .wardrobe-door--left,
+  .doors-animate .wardrobe-door--right {
     animation: none;
   }
 }
 
 @media (max-width: 1100px) {
-  .closet-backdrop-shelf {
+  .wardrobe-hanger.hide-below-1100 {
     display: none;
-  }
-
-  .closet-backdrop-alcove {
-    right: 270px;
-    width: clamp(0px, calc(100% - 560px), 560px);
   }
 }
 
 @media (max-width: 768px) {
-  .closet-backdrop {
-    height: 112px;
+  .wardrobe-scene {
+    --rail-top: 44px;
+    --hanger-w: clamp(56px, 17vw, 80px);
+    /* Text starts 20px from the edge on phones: keep the wood clear of it */
+    --pillar: 8px;
   }
 
-  /* The header stacks on phones: the top-right corner beside the title is free */
-  .closet-backdrop-alcove {
-    top: 6px;
-    right: 12px;
-    width: 54%;
-    opacity: 0.38;
+  .wardrobe-frame {
+    box-shadow:
+      inset 0 24px 24px -20px rgba(60, 40, 20, 0.26),
+      inset 14px 0 14px -14px rgba(60, 40, 20, 0.16),
+      inset -14px 0 14px -14px rgba(60, 40, 20, 0.16);
+  }
+
+  .wardrobe-hanger.hide-below-768 {
+    display: none;
+  }
+
+  .wardrobe-handle {
+    height: 44px;
+    width: 5px;
+  }
+
+  .wardrobe-stack--b {
+    display: none;
   }
 }
 
@@ -3042,4 +3269,12 @@
 .borrow-row-focus {
   border-color: var(--gold-light);
   box-shadow: 0 0 0 2px var(--gold-pale);
+}
+
+@media (max-width: 1100px) {
+  /* Below this width the rail's end brackets would sit behind the page eyebrow */
+  .wardrobe-rail::before,
+  .wardrobe-rail::after {
+    display: none;
+  }
 }
